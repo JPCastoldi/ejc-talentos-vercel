@@ -32,7 +32,7 @@ type Person = {
   main: string;
   tags: string[];
   current: string;
-  history: string;
+  history: string[];
   note: string;
   photo?: string;
 };
@@ -60,7 +60,7 @@ const initial: Person[] = [
     main: "Comunicação",
     tags: ["Comunicação", "Acolhimento", "Criatividade"],
     current: "Grupo de Jovens",
-    history: "Círculo — 18º EJC",
+    history: ["Círculo — 18º EJC"],
     note: "Tem facilidade para conduzir dinâmicas e integrar jovens mais tímidos.",
   },
   {
@@ -71,7 +71,7 @@ const initial: Person[] = [
     main: "Instrumento",
     tags: ["Instrumento", "Espiritualidade", "Proatividade"],
     current: "Ministério de Música",
-    history: "Liturgia — 17º EJC",
+    history: ["Liturgia — 17º EJC"],
     note: "Toca violão e teclado; mantém tranquilidade nos momentos de oração.",
   },
   {
@@ -82,7 +82,7 @@ const initial: Person[] = [
     main: "Organização",
     tags: ["Organização", "Escrita", "Atenção"],
     current: "Pastoral da Comunicação",
-    history: "Secretaria — 18º EJC",
+    history: ["Secretaria — 18º EJC"],
     note: "Muito atenta a prazos, listas e detalhes.",
   },
   {
@@ -93,7 +93,7 @@ const initial: Person[] = [
     main: "Proatividade",
     tags: ["Proatividade", "Agilidade", "Trabalho em equipe"],
     current: "Coroinhas",
-    history: "Externa — 17º EJC",
+    history: ["Externa — 17º EJC"],
     note: "Resolve imprevistos com rapidez e trabalha bem sob pressão.",
   },
   {
@@ -104,7 +104,7 @@ const initial: Person[] = [
     main: "Acolhimento",
     tags: ["Acolhimento", "Liderança", "Empatia"],
     current: "Pastoral Familiar",
-    history: "Sala — 16º e 18º EJC",
+    history: ["Sala — 16º EJC", "Sala — 18º EJC"],
     note: "Casal acolhedor, sereno e com boa escuta.",
   },
   {
@@ -115,7 +115,7 @@ const initial: Person[] = [
     main: "Liderança",
     tags: ["Liderança", "Organização", "Responsabilidade"],
     current: "ECC",
-    history: "Coordenação — 17º EJC",
+    history: ["Coordenação — 17º EJC"],
     note: "Experiência em planejamento e acompanhamento de equipes.",
   },
 ];
@@ -144,7 +144,14 @@ export default function Home() {
     [newTag, setNewTag] = useState("");
   useEffect(() => {
     fetch("/api/data").then(r=>r.ok?r.json():Promise.reject()).then(data=>{
-      if(data.people?.length)setPeople(data.people);
+      if(data.people?.length)setPeople(data.people.map((person: Person & { history?: string | string[] })=>({
+        ...person,
+        history: Array.isArray(person.history)
+          ? person.history
+          : person.history
+            ? [person.history]
+            : [],
+      })));
       if(data.teams?.length)setTeamList(data.teams);
       if(data.tags?.length)setCustomTags(data.tags);
     }).catch(()=>{});
@@ -182,7 +189,10 @@ export default function Home() {
         .map((x) => x.trim())
         .filter(Boolean),
       current: String(fd.get("current") || ""),
-      history: String(fd.get("history") || ""),
+      history: fd
+        .getAll("history")
+        .map((item) => String(item).trim())
+        .filter(Boolean),
       note: String(fd.get("note") || ""),
       photo,
     };
@@ -704,7 +714,17 @@ function Profile({
             </span>
           </Info>
           <Info t="Atuação atual">{person.current}</Info>
-          <Info t="Experiências anteriores">{person.history}</Info>
+          <Info t="Experiências anteriores">
+            {person.history.length ? (
+              <ul className="list-disc space-y-1 pl-5">
+                {person.history.map((experience, index) => (
+                  <li key={`${experience}-${index}`}>{experience}</li>
+                ))}
+              </ul>
+            ) : (
+              <span className="text-[#89928f]">Nenhuma experiência cadastrada.</span>
+            )}
+          </Info>
           <Info t="Pontos fortes">
             <div className="flex flex-wrap gap-1">
               {person.tags.map((x) => (
@@ -761,6 +781,12 @@ function Add({
   save: (f: FormData, original?: Person) => void;
   tags: string[];
 }) {
+  const [historyItems, setHistoryItems] = useState<string[]>([""]);
+
+  useEffect(() => {
+    setHistoryItems(person?.history?.length ? person.history : [""]);
+  }, [person, open]);
+
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl">
@@ -796,7 +822,52 @@ function Add({
             ))}
           </datalist>
           <Field label="Atribuição atual" name="current" defaultValue={person?.current} />
-          <Field label="Experiências anteriores" name="history" defaultValue={person?.history} />
+          <div className="field sm:col-span-2">
+            <span>Experiências anteriores</span>
+            <div className="grid gap-2">
+              {historyItems.map((experience, index) => (
+                <div key={index} className="flex gap-2">
+                  <input
+                    name="history"
+                    value={experience}
+                    onChange={(event) =>
+                      setHistoryItems((items) =>
+                        items.map((item, itemIndex) =>
+                          itemIndex === index ? event.target.value : item,
+                        ),
+                      )
+                    }
+                    placeholder="Ex.: Equipe de Círculo — 18º EJC"
+                    className="flex-1"
+                  />
+                  {historyItems.length > 1 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={`Remover experiência ${index + 1}`}
+                      onClick={() =>
+                        setHistoryItems((items) =>
+                          items.filter((_, itemIndex) => itemIndex !== index),
+                        )
+                      }
+                    >
+                      ×
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-2 w-fit"
+              onClick={() => setHistoryItems((items) => [...items, ""])}
+            >
+              <Plus /> Adicionar outro EJC
+            </Button>
+            <small>Cadastre separadamente cada EJC e a equipe em que participou.</small>
+          </div>
           <label className="field sm:col-span-2">
             Pontos fortes / tags
             <input
