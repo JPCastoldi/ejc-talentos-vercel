@@ -489,7 +489,7 @@ function Dashboard({
     <>
       <section className="relative overflow-hidden rounded-3xl bg-[#111] px-5 py-7 text-white sm:rounded-[2rem] sm:px-7 sm:py-9 md:px-10">
         <div className="absolute -right-20 -top-24 size-72 rounded-full border-[45px] border-[#f47a20]/30" />
-        <img src="/ejc-logo.png" alt="" className="absolute bottom-0 right-8 hidden h-[92%] opacity-20 md:block" />
+        <img src="/ejc-logo-transparent.png" alt="" className="absolute right-4 top-1/2 hidden h-[86%] w-[34%] -translate-y-1/2 object-contain opacity-30 md:block lg:right-8" />
         <div className="relative max-w-2xl">
           <span className="text-sm font-bold uppercase tracking-[.2em] text-[#ff9a4d]">
             Banco de talentos do encontro
@@ -634,13 +634,13 @@ function Card({ p, i, open }: { p: Person; i: number; open: () => void }) {
   return (
     <button
       onClick={open}
-      className={`group min-w-0 overflow-hidden rounded-2xl border text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg ${inactive ? "border-2 border-[#b42318] bg-[#fff4f2]" : "border-[#dedacf] bg-white"}`}
+      className={`group flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg ${inactive ? "border-2 border-[#b42318] bg-[#fff4f2]" : "border-[#dedacf] bg-white"}`}
     >
       <div
-        className="h-1.5"
+        className="h-1.5 w-full shrink-0"
         style={{ background: inactive ? "#b42318" : colors[i % colors.length] }}
       />
-      <div className="p-5">
+      <div className="flex min-h-0 w-full flex-1 flex-col p-5">
         <div className="flex items-start gap-4">
           <Avatar name={p.name} photo={p.photo} c={colors[i % colors.length]} />
           <div className="min-w-0 flex-1">
@@ -656,15 +656,15 @@ function Card({ p, i, open }: { p: Person; i: number; open: () => void }) {
           </div>
         ) : (
           <>
-            <div className="mt-5">
+            <div className="mt-5 min-h-6">
               <span className="inline-block max-w-full truncate rounded-full bg-[#fff0e4] px-3 py-1 text-xs font-bold text-[#c9580d]">
                 ★ {p.main}
               </span>
             </div>
-            <p className="mt-4 line-clamp-2 break-words text-sm leading-6 text-[#65716e]">{p.note}</p>
+            <p className="mt-4 min-h-12 line-clamp-2 break-words text-sm leading-6 text-[#65716e]">{p.note || "Sem observações cadastradas."}</p>
           </>
         )}
-        <div className="mt-5 flex justify-between border-t border-[#eeeae1] pt-4 text-xs text-[#7d8784]">
+        <div className="mt-auto flex min-w-0 justify-between border-t border-[#eeeae1] pt-4 text-xs text-[#7d8784]">
           <span className="min-w-0 truncate pr-3">{inactive ? "Clique para ver o motivo" : p.current}</span>
           <ChevronRight size={17} />
         </div>
