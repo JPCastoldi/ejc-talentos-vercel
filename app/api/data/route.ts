@@ -21,14 +21,39 @@ export async function POST(req:Request) {
       const person = body.person;
       person.main = String(person.main || "").trim().toLocaleLowerCase("pt-BR");
       person.tags = [...new Set((person.tags || []).map((tag: unknown) => String(tag).trim().toLocaleLowerCase("pt-BR")).filter(Boolean))];
-      const duplicate=await sql`SELECT id FROM ejc_people WHERE id <> ${person.id} AND lower(trim(data->>'name')) = lower(trim(${person.name})) LIMIT 1`;
-      if(duplicate.length) return NextResponse.json({error:"Já existe uma pessoa cadastrada com esse nome."},{status:409});
+      const current=await sql`SELECT data->>'name' AS name FROM ejc_people WHERE id = ${person.id} LIMIT 1`;
+      const nameChanged=!current.length || String(current[0].name || "").trim().toLocaleLowerCase("pt-BR") !== String(person.name || "").trim().toLocaleLowerCase("pt-BR");
+      if(nameChanged) {
+        const duplicate=await sql`SELECT id FROM ejc_people WHERE id <> ${person.id} AND lower(trim(data->>'name')) = lower(trim(${person.name})) LIMIT 1`;
+        if(duplicate.length) return NextResponse.json({error:"Já existe uma pessoa cadastrada com esse nome."},{status:409});
+      }
       if(!person.history?.length || !person.tags.length) return NextResponse.json({error:"Experiências anteriores e pontos fortes são obrigatórios."},{status:400});
       await sql`INSERT INTO ejc_people (id,data) VALUES (${person.id},${sql.json(person)}) ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data`;
     }
     if(body.type==="teams") await sql`INSERT INTO ejc_settings (key,data) VALUES ('teams',${sql.json(body.teams)}) ON CONFLICT (key) DO UPDATE SET data=EXCLUDED.data`;
     if(body.type==="tags") await sql`INSERT INTO ejc_settings (key,data) VALUES ('tags',${sql.json(body.tags)}) ON CONFLICT (key) DO UPDATE SET data=EXCLUDED.data`;
     if(body.type==="lastEjc") await sql`INSERT INTO ejc_settings (key,data) VALUES ('lastEjc',${sql.json(body.lastEjc)}) ON CONFLICT (key) DO UPDATE SET data=EXCLUDED.data`;
+    if(body.type==="deleteTag") {
+      const tag=String(body.tag || "").trim().toLocaleLowerCase("pt-BR");
+      const people=await sql`SELECT id,data FROM ejc_people`;
+      for(const row of people) {
+        const data=row.data as Record<string, any>;
+        const tags=Array.isArray(data.tags) ? data.tags.map(String).filter((item) => item.trim().toLocaleLowerCase("pt-BR") !== tag) : [];
+        const main=String(data.main || "").trim().toLocaleLowerCase("pt-BR") === tag ? (tags[0] || "") : String(data.main || "");
+        await sql`UPDATE ejc_people SET data=${sql.json({...data,tags,main})} WHERE id=${row.id}`;
+      }
+      const settings=await sql`SELECT key,data FROM ejc_settings WHERE key IN ('tags','teams')`;
+      for(const setting of settings) {
+        if(setting.key === "tags" && Array.isArray(setting.data)) {
+          const tags=setting.data.map(String).filter((item: string) => item.trim().toLocaleLowerCase("pt-BR") !== tag);
+          await sql`UPDATE ejc_settings SET data=${sql.json(tags)} WHERE key='tags'`;
+        }
+        if(setting.key === "teams" && Array.isArray(setting.data)) {
+          const teams:string[][]=setting.data.filter(Array.isArray).map((team: unknown[]) => team.map(String).filter((item, index) => index === 0 || item.trim().toLocaleLowerCase("pt-BR") !== tag));
+          await sql`UPDATE ejc_settings SET data=${sql.json(teams)} WHERE key='teams'`;
+        }
+      }
+    }
     return NextResponse.json({ok:true});
   } finally { await sql.end(); }
 }

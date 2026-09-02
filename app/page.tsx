@@ -184,7 +184,9 @@ export default function Home() {
   );
   async function save(fd: FormData, original?: Person) {
     const name = String(fd.get("name") || "").trim();
-    if (people.some((person) => person.id !== original?.id && person.name.trim().toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR"))) {
+    const normalizedName = name.toLocaleLowerCase("pt-BR");
+    const originalName = original?.name.trim().toLocaleLowerCase("pt-BR");
+    if (normalizedName !== originalName && people.some((person) => String(person.id) !== String(original?.id) && person.name.trim().toLocaleLowerCase("pt-BR") === normalizedName)) {
       window.alert("Já existe uma pessoa cadastrada com esse nome.");
       return;
     }
@@ -253,6 +255,27 @@ export default function Home() {
     setPeople((items) => items.map((item) => item.id === person.id ? updated : item));
     setSelected(updated);
     await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"person",person:updated})});
+  }
+  async function deleteTag(tag: string) {
+    if (!window.confirm(`Excluir a tag "${tag}" dos perfis e das equipes?`)) return;
+    const normalized = normalizeTag(tag);
+    const updatedPeople = people.map((person) => {
+      const personTags = person.tags.filter((item) => normalizeTag(item) !== normalized);
+      return {
+        ...person,
+        tags: personTags,
+        main: normalizeTag(person.main) === normalized ? (personTags[0] || "") : person.main,
+      };
+    });
+    const updatedTeams = teamList.map((team) => [team[0], ...team.slice(1).filter((item) => normalizeTag(item) !== normalized)]);
+    setPeople(updatedPeople);
+    setTeamList(updatedTeams);
+    setCustomTags((items) => items.filter((item) => normalizeTag(item) !== normalized));
+    const response = await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"deleteTag",tag:normalized})});
+    if (!response.ok) {
+      window.alert("Não foi possível excluir a tag.");
+      window.location.reload();
+    }
   }
   function saveTeam(fd: FormData) {
     if (!editingTeam) return;
@@ -381,6 +404,7 @@ export default function Home() {
                 fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"tags",tags:n})});
                 setNewTag("");
               }}
+              remove={deleteTag}
             />
           )}
         </main>
@@ -613,7 +637,7 @@ function Avatar({ name, c, photo }: { name: string; c: string; photo?: string })
   return (
     <span
       style={{ background: c }}
-      className="grid size-12 shrink-0 place-items-center rounded-full font-serif font-bold text-white"
+      className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-full font-serif font-bold text-white"
     >
       {photo ? <img src={photo} alt={`Foto de ${name}`} className="size-full rounded-full object-cover" /> : name
         .split(" ")
@@ -695,7 +719,7 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
     </>
   );
 }
-function TagsPage({ tags, value, setValue, add, people, open, lastEjc, setLastEjc }: any) {
+function TagsPage({ tags, value, setValue, add, remove, people, open, lastEjc, setLastEjc }: any) {
   return (
     <>
       <p className="eyebrow">Configuração</p>
@@ -731,9 +755,10 @@ function TagsPage({ tags, value, setValue, add, people, open, lastEjc, setLastEj
                 borderColor: colors[i % 6] + "55",
                 color: colors[i % 6],
               }}
-              className="rounded-full border px-4 py-2 text-sm font-semibold"
+              className="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold"
             >
               {t}
+              <button type="button" onClick={() => remove(t)} aria-label={`Excluir tag ${t}`} className="grid size-6 place-items-center rounded-full hover:bg-black/10">×</button>
             </span>
           ))}
         </div>
@@ -905,7 +930,7 @@ function Add({
           </DialogDescription>
         </DialogHeader>
         <form action={(fd)=>save(fd,person??undefined)} className="grid gap-4 sm:grid-cols-2">
-          <label className="field sm:col-span-2">Foto do perfil<div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#e5b895] bg-[#fff8f2] p-3 sm:flex-row sm:items-center sm:gap-4 sm:p-4">{person?.photo?<img src={person.photo} alt="Foto atual" className="size-16 shrink-0 rounded-full object-cover"/>:<span className="grid size-16 shrink-0 place-items-center rounded-full bg-[#f47a20]/15 text-[#c9580d]"><Camera/></span>}<input type="file" name="photo" accept="image/*" className="min-w-0 w-full text-sm"/></div><small>Envie uma imagem de no máximo 5 MB. A foto será salva com o cadastro.</small></label>
+          <label className="field sm:col-span-2">Foto do perfil<div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#e5b895] bg-[#fff8f2] p-3 sm:flex-row sm:items-center sm:gap-4 sm:p-4">{person?.photo?<span className="size-16 shrink-0 overflow-hidden rounded-full"><img src={person.photo} alt="Foto atual" className="size-full object-cover"/></span>:<span className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f47a20]/15 text-[#c9580d]"><Camera/></span>}<input type="file" name="photo" accept="image/*" className="min-w-0 w-full text-sm"/></div><small>Envie uma imagem de no máximo 5 MB. A foto será salva com o cadastro.</small></label>
           <Field label="Nome completo / nome do casal" name="name" defaultValue={person?.name} required />
           <label className="field">
             Tipo
