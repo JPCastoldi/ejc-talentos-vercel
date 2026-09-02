@@ -33,6 +33,8 @@ type Person = {
   tags: string[];
   current: string;
   history: string[];
+  birthYear?: number;
+  active?: boolean;
   note: string;
   photo?: string;
 };
@@ -127,11 +129,12 @@ const colors = [
   "#ff9a4d",
   "#2d2d2d",
 ];
+const normalizeTag = (value: string) => value.trim().toLocaleLowerCase("pt-BR");
 
 export default function Home() {
   const [view, setView] = useState("inicio"),
-    [people, setPeople] = useState<Person[]>(initial),
-    [teamList, setTeamList] = useState<string[][]>(defaultTeams),
+    [people, setPeople] = useState<Person[]>(initial.map((person) => ({...person, main: normalizeTag(person.main), tags: person.tags.map(normalizeTag), active: true}))),
+    [teamList, setTeamList] = useState<string[][]>(defaultTeams.map((team) => [team[0], ...team.slice(1).map(normalizeTag)])),
     [query, setQuery] = useState(""),
     [selected, setSelected] = useState<Person | null>(null),
     [editing, setEditing] = useState<Person | null>(null),
@@ -142,6 +145,7 @@ export default function Home() {
     [adding, setAdding] = useState(false),
     [customTags, setCustomTags] = useState<string[]>([]),
     [newTag, setNewTag] = useState("");
+  const [lastEjc, setLastEjc] = useState(18);
   useEffect(() => {
     fetch("/api/data").then(r=>r.ok?r.json():Promise.reject()).then(data=>{
       if(data.people?.length)setPeople(data.people.map((person: Person & { history?: string | string[] })=>({
@@ -151,9 +155,13 @@ export default function Home() {
           : person.history
             ? [person.history]
             : [],
+        tags: (person.tags || []).map(normalizeTag),
+        main: normalizeTag(person.main || ""),
+        active: person.active !== false,
       })));
-      if(data.teams?.length)setTeamList(data.teams);
-      if(data.tags?.length)setCustomTags(data.tags);
+      if(data.teams?.length)setTeamList(data.teams.map((team: string[]) => [team[0], ...team.slice(1).map(normalizeTag)]));
+      if(data.tags?.length)setCustomTags(data.tags.map(normalizeTag));
+      if(Number.isInteger(data.lastEjc))setLastEjc(data.lastEjc);
     }).catch(()=>{});
   }, []);
   const tags = useMemo(
@@ -175,24 +183,51 @@ export default function Home() {
         .includes(query.toLowerCase()),
   );
   async function save(fd: FormData, original?: Person) {
+    const name = String(fd.get("name") || "").trim();
+    if (people.some((person) => person.id !== original?.id && person.name.trim().toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR"))) {
+      window.alert("Já existe uma pessoa cadastrada com esse nome.");
+      return;
+    }
+    const history = fd.getAll("history").map((item) => String(item).trim()).filter(Boolean);
+    if (!history.length) {
+      window.alert("Adicione pelo menos uma experiência anterior.");
+      return;
+    }
+    const invalidEjc = history.find((item) => {
+      const match = item.match(/(\d+)\s*º?/);
+      return !match || Number(match[1]) > lastEjc;
+    });
+    if (invalidEjc) {
+      window.alert(`Informe o número do EJC em cada experiência. O último realizado é o ${lastEjc}º EJC.`);
+      return;
+    }
+    const normalizedTags = String(fd.get("tags") || "").split(",").map(normalizeTag).filter(Boolean);
+    if (!normalizedTags.length) {
+      window.alert("Adicione pelo menos um ponto forte.");
+      return;
+    }
     const file = fd.get("photo") as File;
     let photo = original?.photo;
-    if (file?.size) { const upload=new FormData(); upload.set("file",file); const res=await fetch("/api/upload",{method:"POST",body:upload}); if(!res.ok) throw new Error("Falha ao enviar foto"); photo=(await res.json()).url; }
+    if (file?.size) {
+      if (file.size > 5 * 1024 * 1024) {
+        window.alert("A foto deve ter no máximo 5 MB. Reduza o tamanho da imagem e tente novamente.");
+        return;
+      }
+      const upload=new FormData(); upload.set("file",file); const res=await fetch("/api/upload",{method:"POST",body:upload});
+      if(!res.ok) { const result=await res.json().catch(()=>({})); window.alert(result.error || "Não foi possível enviar a foto."); return; }
+      photo=(await res.json()).url;
+    }
     const p: Person = {
       id: original?.id ?? Date.now(),
-      name: String(fd.get("name")),
+      name,
       kind: String(fd.get("kind")) as Kind,
       community: String(fd.get("community")),
-      main: String(fd.get("main")),
-      tags: String(fd.get("tags") || "")
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean),
+      main: normalizeTag(String(fd.get("main"))),
+      tags: [...new Set(normalizedTags)],
       current: String(fd.get("current") || ""),
-      history: fd
-        .getAll("history")
-        .map((item) => String(item).trim())
-        .filter(Boolean),
+      history,
+      birthYear: Number(fd.get("birthYear")) || undefined,
+      active: original?.active !== false,
       note: String(fd.get("note") || ""),
       photo,
     };
@@ -200,11 +235,24 @@ export default function Home() {
       ? people.map((x) => (x.id === original.id ? p : x))
       : [...people, p];
     setPeople(next);
-    await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"person",person:p})});
+    const saved = await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"person",person:p})});
+    if (!saved.ok) {
+      const result = await saved.json().catch(() => ({}));
+      setPeople(people);
+      window.alert(result.error || "Não foi possível salvar o perfil.");
+      return;
+    }
     setAdding(false);
     setEditing(null);
     setSelected(null);
     setView(p.kind === "jovem" ? "jovens" : "tios");
+  }
+  async function toggleActive(person: Person) {
+    if (person.kind !== "jovem") return;
+    const updated = { ...person, active: person.active === false };
+    setPeople((items) => items.map((item) => item.id === person.id ? updated : item));
+    setSelected(updated);
+    await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"person",person:updated})});
   }
   function saveTeam(fd: FormData) {
     if (!editingTeam) return;
@@ -212,7 +260,7 @@ export default function Home() {
       String(fd.get("name")),
       ...String(fd.get("skills") || "")
         .split(",")
-        .map((x) => x.trim())
+        .map(normalizeTag)
         .filter(Boolean),
     ];
     const next = teamList.map((t, i) =>
@@ -225,36 +273,36 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#fff8f2] text-[#17120f]">
       <header className="sticky top-0 z-20 border-b border-[#ead9cc] bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[1440px] items-center justify-between px-5 py-3 lg:px-10">
+        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-2.5 sm:px-5 sm:py-3 lg:px-10">
           <button
             onClick={() => setView("inicio")}
-            className="flex items-center gap-3 text-left"
+            className="flex min-w-0 items-center gap-2.5 text-left sm:gap-3"
           >
             <img
               src="/ejc-logo.png"
               alt="Símbolo do EJC"
-              className="size-12 rounded-full object-contain"
+              className="size-10 shrink-0 rounded-full object-contain sm:size-12"
             />
             <span>
-              <b className="block font-serif text-xl leading-none">
+              <b className="block truncate font-serif text-lg leading-none sm:text-xl">
                 EJC Talentos
               </b>
-              <small className="text-[#75675d]">
+              <small className="hidden text-[#75675d] sm:block">
                 Pessoas certas, equipes mais fortes
               </small>
             </span>
           </button>
           <Button
             onClick={() => setAdding(true)}
-            className="rounded-full bg-[#f47a20] px-5 text-black hover:bg-[#df6813]"
+            className="h-10 shrink-0 rounded-full bg-[#f47a20] px-3 text-black hover:bg-[#df6813] sm:px-5"
           >
-            <Plus /> Novo perfil
+            <Plus /> <span className="hidden sm:inline">Novo perfil</span><span className="sm:hidden">Novo</span>
           </Button>
         </div>
       </header>
       <div className="mx-auto grid max-w-[1440px] lg:grid-cols-[230px_1fr]">
-        <aside className="border-b border-[#d8d4c8] p-4 lg:min-h-[calc(100vh-73px)] lg:border-b-0 lg:border-r lg:p-6">
-          <nav className="flex gap-2 overflow-x-auto lg:flex-col">
+        <aside className="sticky top-[61px] z-10 border-b border-[#d8d4c8] bg-[#fff8f2]/95 px-3 py-2 backdrop-blur lg:static lg:min-h-[calc(100vh-73px)] lg:border-b-0 lg:border-r lg:p-6">
+          <nav className="scrollbar-none flex gap-1.5 overflow-x-auto lg:flex-col lg:gap-2">
             {[
               ["inicio", LayoutGrid, "Visão geral"],
               ["jovens", CircleUserRound, "Jovens"],
@@ -265,7 +313,7 @@ export default function Home() {
               <button
                 key={id as string}
                 onClick={() => setView(id as string)}
-                className={`flex shrink-0 items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition ${view === id ? "bg-[#ffe5d2] text-[#bd4e08]" : "text-[#675b54] hover:bg-white/70"}`}
+                className={`flex min-h-11 shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition sm:px-4 lg:gap-3 lg:py-3 ${view === id ? "bg-[#ffe5d2] text-[#bd4e08]" : "text-[#675b54] hover:bg-white/70"}`}
               >
                 <Icon size={18} />
                 {label as string}
@@ -276,11 +324,11 @@ export default function Home() {
             <p className="text-xs font-bold uppercase tracking-widest text-[#ff9a4d]">
               Próximo encontro
             </p>
-            <p className="mt-2 font-serif text-2xl">19º EJC</p>
+            <p className="mt-2 font-serif text-2xl">{lastEjc + 1}º EJC</p>
             <p className="mt-1 text-sm text-white/65">Base em preparação</p>
           </div>
         </aside>
-        <main className="min-w-0 p-5 lg:p-10">
+        <main className="min-w-0 p-4 sm:p-5 lg:p-10">
           {view === "inicio" && (
             <Dashboard
               people={people}
@@ -314,11 +362,21 @@ export default function Home() {
           {view === "tags" && (
             <TagsPage
               tags={tags}
+              people={people}
+              open={setSelected}
+              lastEjc={lastEjc}
+              setLastEjc={(value: number) => {
+                if (!Number.isInteger(value) || value < 1) return;
+                setLastEjc(value);
+                fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"lastEjc",lastEjc:value})});
+              }}
               value={newTag}
               setValue={setNewTag}
               add={() => {
                 if (!newTag.trim()) return;
-                const n = [...customTags, newTag.trim()];
+                const tag = normalizeTag(newTag);
+                if (!tag || tags.includes(tag)) return;
+                const n = [...customTags, tag];
                 setCustomTags(n);
                 fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"tags",tags:n})});
                 setNewTag("");
@@ -335,6 +393,7 @@ export default function Home() {
           setEditing(selected);
           setSelected(null);
         }}
+        toggleActive={() => selected && toggleActive(selected)}
       />
       <Add
         open={adding || !!editing}
@@ -345,6 +404,7 @@ export default function Home() {
         }}
         save={save}
         tags={tags}
+        lastEjc={lastEjc}
       />
       <TeamEdit
         data={editingTeam}
@@ -366,16 +426,20 @@ function Dashboard({
   go: (x: string) => void;
   open: (p: Person) => void;
 }) {
+  const featured = [...people]
+    .filter((person) => person.active !== false)
+    .sort((a, b) => (b.tags.length + b.history.length) - (a.tags.length + a.history.length))
+    .slice(0, 3);
   return (
     <>
-      <section className="relative overflow-hidden rounded-[2rem] bg-[#111] px-7 py-9 text-white md:px-10">
+      <section className="relative overflow-hidden rounded-3xl bg-[#111] px-5 py-7 text-white sm:rounded-[2rem] sm:px-7 sm:py-9 md:px-10">
         <div className="absolute -right-20 -top-24 size-72 rounded-full border-[45px] border-[#f47a20]/30" />
         <img src="/ejc-logo.png" alt="" className="absolute bottom-0 right-8 hidden h-[92%] opacity-20 md:block" />
         <div className="relative max-w-2xl">
           <span className="text-sm font-bold uppercase tracking-[.2em] text-[#ff9a4d]">
             Banco de talentos do encontro
           </span>
-          <h1 className="mt-4 font-serif text-4xl leading-tight md:text-5xl">
+          <h1 className="mt-3 font-serif text-3xl leading-tight sm:mt-4 sm:text-4xl md:text-5xl">
             Cada dom encontra seu lugar de servir.
           </h1>
           <p className="mt-4 max-w-xl text-base leading-7 text-white/75">
@@ -386,8 +450,8 @@ function Dashboard({
       </section>
       <section className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
-          n={people.filter((p) => p.kind === "jovem").length}
-          text="jovens cadastrados"
+          n={people.filter((p) => p.kind === "jovem" && p.active !== false).length}
+          text="jovens ativos"
           c={colors[0]}
         />
         <Stat
@@ -403,10 +467,10 @@ function Dashboard({
         />
       </section>
       <section className="mt-8">
-        <p className="eyebrow">Pessoas em destaque</p>
-        <h2 className="section-title">Talentos que fazem a diferença</h2>
+        <p className="eyebrow">Perfis mais completos</p>
+        <h2 className="section-title">Pessoas com mais experiências e talentos</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {people.slice(0, 3).map((p, i) => (
+          {featured.map((p, i) => (
             <Card key={p.id} p={p} i={i} open={() => open(p)} />
           ))}
         </div>
@@ -481,7 +545,7 @@ function Directory({
           <h1 className="page-title">{title}</h1>
           <p className="mt-2 text-[#687572]">{subtitle}</p>
         </div>
-        <Button onClick={add} className="rounded-full bg-[#f47a20] text-black hover:bg-[#df6813]">
+        <Button onClick={add} className="w-full rounded-full bg-[#f47a20] text-black hover:bg-[#df6813] sm:w-fit">
           <Plus /> Adicionar perfil
         </Button>
       </div>
@@ -526,6 +590,7 @@ function Card({ p, i, open }: { p: Person; i: number; open: () => void }) {
           <div className="min-w-0">
             <h3 className="truncate font-serif text-xl font-bold">{p.name}</h3>
             <p className="truncate text-sm text-[#73807c]">{p.community}</p>
+            {p.kind === "jovem" && p.active === false && <span className="mt-1 inline-block rounded-full bg-[#eee] px-2 py-0.5 text-[11px] font-bold text-[#777]">Inativo</span>}
           </div>
         </div>
         <div className="mt-5">
@@ -570,9 +635,10 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
       <div className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {teams.map((t, i) => {
           const matches = people
+            .filter((p) => p.kind === "tios" || p.active !== false)
             .map((p) => ({
               p,
-              s: p.tags.filter((x) => t.slice(1).includes(x)).length,
+              s: p.tags.filter((x) => t.slice(1).map(normalizeTag).includes(normalizeTag(x))).length,
             }))
             .sort((a, b) => b.s - a.s)
             .filter((x) => x.s)
@@ -629,16 +695,23 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
     </>
   );
 }
-function TagsPage({ tags, value, setValue, add }: any) {
+function TagsPage({ tags, value, setValue, add, people, open, lastEjc, setLastEjc }: any) {
   return (
     <>
       <p className="eyebrow">Configuração</p>
       <h1 className="page-title">Tags e talentos</h1>
       <p className="mt-2 text-[#687572]">
-        Crie características para associar aos perfis e às equipes.
+        Consulte as pessoas por talento e crie características para os perfis e equipes.
       </p>
+      <div className="mt-6 max-w-sm rounded-2xl border bg-white p-5">
+        <label className="field">
+          Último EJC realizado
+          <input type="number" min={1} value={lastEjc} onChange={(event) => setLastEjc(Number(event.target.value))} />
+          <small>Experiências de encontros posteriores serão bloqueadas.</small>
+        </label>
+      </div>
       <div className="mt-7 rounded-2xl border bg-white p-6">
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <input
             value={value}
             onChange={(e) => setValue(e.target.value)}
@@ -646,7 +719,7 @@ function TagsPage({ tags, value, setValue, add }: any) {
             placeholder="Ex.: Fotografia, liderança..."
             className="h-11 flex-1 rounded-lg border px-4"
           />
-          <Button onClick={add} className="h-11 bg-[#f47a20] text-black hover:bg-[#df6813]">
+          <Button onClick={add} className="h-11 w-full bg-[#f47a20] text-black hover:bg-[#df6813] sm:w-auto">
             <Plus /> Criar tag
           </Button>
         </div>
@@ -665,6 +738,25 @@ function TagsPage({ tags, value, setValue, add }: any) {
           ))}
         </div>
       </div>
+      <div className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {tags.map((tag: string, index: number) => {
+          const tagged = people.filter((person: Person) => person.tags.includes(tag) || person.main === tag);
+          return <section key={tag} className="rounded-2xl border bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-serif text-xl font-bold capitalize">{tag}</h2>
+              <span className="text-xs text-[#7d8784]">{tagged.length} pessoa(s)</span>
+            </div>
+            <div className="mt-4 grid gap-2">
+              {tagged.length ? tagged.map((person: Person) => (
+                <button key={person.id} onClick={() => open(person)} className="flex items-center gap-3 rounded-xl border p-3 text-left hover:bg-[#fff8f2]">
+                  <Avatar name={person.name} photo={person.photo} c={colors[(person.id + index) % colors.length]} />
+                  <span><b className="block text-sm">{person.name}</b><small className="text-[#7d8784]">{person.kind === "jovem" ? "Jovem" : "Casal de tios"}</small></span>
+                </button>
+              )) : <p className="text-sm text-[#8b9491]">Nenhuma pessoa associada.</p>}
+            </div>
+          </section>;
+        })}
+      </div>
     </>
   );
 }
@@ -673,30 +765,32 @@ function Profile({
   teams,
   close,
   edit,
+  toggleActive,
 }: {
   person: Person | null;
   teams: string[][];
   close: () => void;
   edit: () => void;
+  toggleActive: () => void;
 }) {
   if (!person) return null;
   const rec = teams
     .map((t) => ({
       n: t[0],
-      s: person.tags.filter((x) => t.slice(1).includes(x)).length,
+      s: person.tags.filter((x) => t.slice(1).map(normalizeTag).includes(normalizeTag(x))).length,
     }))
     .sort((a, b) => b.s - a.s)
     .slice(0, 3);
   return (
     <Dialog open onOpenChange={close}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-h-[90vh] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="sr-only">Perfil de {person.name}</DialogTitle>
           <DialogDescription className="sr-only">
             Detalhes e equipes recomendadas.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex gap-4 border-b pb-5">
+        <div className="flex flex-wrap gap-3 border-b pb-5 sm:flex-nowrap sm:gap-4">
           <Avatar name={person.name} photo={person.photo} c={colors[person.id % 6]} />
           <div className="min-w-0 flex-1">
             <h2 className="font-serif text-2xl font-bold">{person.name}</h2>
@@ -705,7 +799,14 @@ function Profile({
               {person.community}
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={edit}><Pencil/> Editar</Button>
+          <div className="flex w-full gap-2 sm:w-auto sm:flex-col">
+            <Button className="flex-1 sm:flex-none" variant="outline" size="sm" onClick={edit}><Pencil/> Editar</Button>
+            {person.kind === "jovem" && (
+              <Button className="flex-1 sm:flex-none" variant="outline" size="sm" onClick={toggleActive}>
+                {person.active === false ? "Ativar jovem" : "Desativar jovem"}
+              </Button>
+            )}
+          </div>
         </div>
         <div className="grid gap-5 sm:grid-cols-2">
           <Info t="Talento principal">
@@ -714,6 +815,9 @@ function Profile({
             </span>
           </Info>
           <Info t="Atuação atual">{person.current}</Info>
+          <Info t="Ano de nascimento">
+            {person.birthYear ? `${person.birthYear} · ${new Date().getFullYear() - person.birthYear} anos${new Date().getFullYear() - person.birthYear === 29 ? " · último ano para servir como jovem" : ""}` : "Não informado"}
+          </Info>
           <Info t="Experiências anteriores">
             {person.history.length ? (
               <ul className="list-disc space-y-1 pl-5">
@@ -774,12 +878,14 @@ function Add({
   close,
   save,
   tags,
+  lastEjc,
 }: {
   open: boolean;
   person: Person | null;
   close: () => void;
   save: (f: FormData, original?: Person) => void;
   tags: string[];
+  lastEjc: number;
 }) {
   const [historyItems, setHistoryItems] = useState<string[]>([""]);
 
@@ -789,7 +895,7 @@ function Add({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-h-[92vh] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">
             {person ? "Editar perfil" : "Adicionar novo perfil"}
@@ -799,7 +905,7 @@ function Add({
           </DialogDescription>
         </DialogHeader>
         <form action={(fd)=>save(fd,person??undefined)} className="grid gap-4 sm:grid-cols-2">
-          <label className="field sm:col-span-2">Foto do perfil<div className="flex items-center gap-4 rounded-xl border border-dashed border-[#e5b895] bg-[#fff8f2] p-4">{person?.photo?<img src={person.photo} alt="Foto atual" className="size-16 rounded-full object-cover"/>:<span className="grid size-16 place-items-center rounded-full bg-[#f47a20]/15 text-[#c9580d]"><Camera/></span>}<input type="file" name="photo" accept="image/*" className="flex-1"/></div><small>A imagem fica salva neste navegador.</small></label>
+          <label className="field sm:col-span-2">Foto do perfil<div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#e5b895] bg-[#fff8f2] p-3 sm:flex-row sm:items-center sm:gap-4 sm:p-4">{person?.photo?<img src={person.photo} alt="Foto atual" className="size-16 shrink-0 rounded-full object-cover"/>:<span className="grid size-16 shrink-0 place-items-center rounded-full bg-[#f47a20]/15 text-[#c9580d]"><Camera/></span>}<input type="file" name="photo" accept="image/*" className="min-w-0 w-full text-sm"/></div><small>Envie uma imagem de no máximo 5 MB. A foto será salva com o cadastro.</small></label>
           <Field label="Nome completo / nome do casal" name="name" defaultValue={person?.name} required />
           <label className="field">
             Tipo
@@ -809,24 +915,19 @@ function Add({
             </select>
           </label>
           <Field label="Comunidade" name="community" defaultValue={person?.community} required />
-          <Field
-            label="Talento principal"
-            name="main"
-            defaultValue={person?.main}
-            list="tag-list"
-            required
-          />
-          <datalist id="tag-list">
-            {tags.map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
+          <label className="field">Talento principal
+            <select name="main" defaultValue={person?.main || ""} required>
+              <option value="" disabled>Selecione um talento</option>
+              {tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+            </select>
+          </label>
+          <Field label="Ano de nascimento" name="birthYear" type="number" min={1900} max={new Date().getFullYear()} defaultValue={person?.birthYear} />
           <Field label="Atribuição atual" name="current" defaultValue={person?.current} />
           <div className="field sm:col-span-2">
             <span>Experiências anteriores</span>
             <div className="grid gap-2">
               {historyItems.map((experience, index) => (
-                <div key={index} className="flex gap-2">
+                <div key={index} className="flex items-stretch gap-2">
                   <input
                     name="history"
                     value={experience}
@@ -839,12 +940,14 @@ function Add({
                     }
                     placeholder="Ex.: Equipe de Círculo — 18º EJC"
                     className="flex-1"
+                    required
                   />
                   {historyItems.length > 1 && (
                     <Button
                       type="button"
                       variant="outline"
                       size="icon"
+                      className="shrink-0"
                       aria-label={`Remover experiência ${index + 1}`}
                       onClick={() =>
                         setHistoryItems((items) =>
@@ -866,7 +969,7 @@ function Add({
             >
               <Plus /> Adicionar outro EJC
             </Button>
-            <small>Cadastre separadamente cada EJC e a equipe em que participou.</small>
+            <small>Cadastre separadamente cada EJC e a equipe. O último realizado é o {lastEjc}º EJC.</small>
           </div>
           <label className="field sm:col-span-2">
             Pontos fortes / tags
@@ -874,6 +977,7 @@ function Add({
               name="tags"
               defaultValue={person?.tags.join(", ")}
               placeholder="Comunicação, acolhimento, instrumento"
+              required
             />
             <small>Separe por vírgulas.</small>
           </label>
@@ -881,7 +985,7 @@ function Add({
             Observações
             <textarea name="note" rows={3} defaultValue={person?.note} />
           </label>
-          <DialogFooter className="sm:col-span-2">
+          <DialogFooter className="sm:col-span-2 [&_button]:w-full sm:[&_button]:w-auto">
             <Button type="button" variant="outline" onClick={close}>
               Cancelar
             </Button>
