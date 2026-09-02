@@ -55,74 +55,6 @@ const defaultTeams = [
   ["Equipe de Música", "Instrumento", "Canto", "Trabalho em equipe"],
   ["Ordem e Limpeza", "Disciplina", "Proatividade", "Organização"],
 ];
-const initial: Person[] = [
-  {
-    id: 1,
-    name: "Marina Alves",
-    kind: "jovem",
-    community: "São Paulo Apóstolo",
-    main: "Comunicação",
-    tags: ["Comunicação", "Acolhimento", "Criatividade"],
-    current: "Grupo de Jovens",
-    history: ["Círculo — 18º EJC"],
-    note: "Tem facilidade para conduzir dinâmicas e integrar jovens mais tímidos.",
-  },
-  {
-    id: 2,
-    name: "Lucas Martins",
-    kind: "jovem",
-    community: "Nossa Senhora da Penha",
-    main: "Instrumento",
-    tags: ["Instrumento", "Espiritualidade", "Proatividade"],
-    current: "Ministério de Música",
-    history: ["Liturgia — 17º EJC"],
-    note: "Toca violão e teclado; mantém tranquilidade nos momentos de oração.",
-  },
-  {
-    id: 3,
-    name: "Ana Clara Souza",
-    kind: "jovem",
-    community: "Sagrada Família",
-    main: "Organização",
-    tags: ["Organização", "Escrita", "Atenção"],
-    current: "Pastoral da Comunicação",
-    history: ["Secretaria — 18º EJC"],
-    note: "Muito atenta a prazos, listas e detalhes.",
-  },
-  {
-    id: 4,
-    name: "Rafael Costa",
-    kind: "jovem",
-    community: "São José",
-    main: "Proatividade",
-    tags: ["Proatividade", "Agilidade", "Trabalho em equipe"],
-    current: "Coroinhas",
-    history: ["Externa — 17º EJC"],
-    note: "Resolve imprevistos com rapidez e trabalha bem sob pressão.",
-  },
-  {
-    id: 5,
-    name: "Carlos e Beatriz",
-    kind: "tios",
-    community: "Nossa Senhora da Penha",
-    main: "Acolhimento",
-    tags: ["Acolhimento", "Liderança", "Empatia"],
-    current: "Pastoral Familiar",
-    history: ["Sala — 16º EJC", "Sala — 18º EJC"],
-    note: "Casal acolhedor, sereno e com boa escuta.",
-  },
-  {
-    id: 6,
-    name: "Paulo e Renata",
-    kind: "tios",
-    community: "São Paulo Apóstolo",
-    main: "Liderança",
-    tags: ["Liderança", "Organização", "Responsabilidade"],
-    current: "ECC",
-    history: ["Coordenação — 17º EJC"],
-    note: "Experiência em planejamento e acompanhamento de equipes.",
-  },
-];
 const colors = [
   "#f47a20",
   "#111111",
@@ -135,7 +67,7 @@ const normalizeTag = (value: string) => value.trim().toLocaleLowerCase("pt-BR");
 
 export default function Home() {
   const [view, setView] = useState("inicio"),
-    [people, setPeople] = useState<Person[]>(initial.map((person) => ({...person, main: normalizeTag(person.main), tags: person.tags.map(normalizeTag), active: true}))),
+    [people, setPeople] = useState<Person[]>([]),
     [teamList, setTeamList] = useState<string[][]>(defaultTeams.map((team) => [team[0], ...team.slice(1).map(normalizeTag)])),
     [query, setQuery] = useState(""),
     [selected, setSelected] = useState<Person | null>(null),
@@ -149,9 +81,10 @@ export default function Home() {
     [customTags, setCustomTags] = useState<string[]>([]),
     [newTag, setNewTag] = useState("");
   const [lastEjc, setLastEjc] = useState(18);
+  const [isLoading, setIsLoading] = useState(true);
   useEffect(() => {
     fetch("/api/data").then(r=>r.ok?r.json():Promise.reject()).then(data=>{
-      if(data.people?.length)setPeople(data.people.map((person: Person & { history?: string | string[] })=>({
+      if(Array.isArray(data.people))setPeople(data.people.map((person: Person & { history?: string | string[] })=>({
         ...person,
         history: Array.isArray(person.history)
           ? person.history
@@ -165,7 +98,7 @@ export default function Home() {
       if(data.teams?.length)setTeamList(data.teams.map((team: string[]) => [team[0], ...team.slice(1).map(normalizeTag)]));
       if(data.tags?.length)setCustomTags(data.tags.map(normalizeTag));
       if(Number.isInteger(data.lastEjc))setLastEjc(data.lastEjc);
-    }).catch(()=>{});
+    }).catch(()=>{}).finally(()=>setIsLoading(false));
   }, []);
   const tags = useMemo(
     () =>
@@ -325,7 +258,7 @@ export default function Home() {
             className="flex min-w-0 items-center gap-2.5 text-left sm:gap-3"
           >
             <img
-              src="/ejc-logo.png"
+              src="/ejc-logo-brand.png"
               alt="Símbolo do EJC"
               className="size-10 shrink-0 rounded-full object-contain sm:size-12"
             />
@@ -375,7 +308,15 @@ export default function Home() {
           </div>
         </aside>
         <main className="min-w-0 p-4 sm:p-5 lg:p-10">
-          {view === "inicio" && (
+          {isLoading && (
+            <div className="grid min-h-[45vh] place-items-center rounded-3xl border border-dashed border-[#e2cdbd] bg-white/50 p-8 text-center">
+              <div>
+                <span className="mx-auto block size-9 animate-spin rounded-full border-4 border-[#f47a20]/25 border-t-[#f47a20]" />
+                <p className="mt-4 text-sm font-semibold text-[#746a64]">Carregando dados do EJC...</p>
+              </div>
+            </div>
+          )}
+          {!isLoading && view === "inicio" && (
             <Dashboard
               people={people}
               teamCount={teamList.length}
@@ -383,7 +324,7 @@ export default function Home() {
               open={setSelected}
             />
           )}{" "}
-          {(view === "jovens" || view === "tios") && (
+          {!isLoading && (view === "jovens" || view === "tios") && (
             <Directory
               title={view === "jovens" ? "Jovens" : "Casais de tios"}
               subtitle={
@@ -398,14 +339,14 @@ export default function Home() {
               add={() => setAdding(true)}
             />
           )}{" "}
-          {view === "equipes" && (
+          {!isLoading && view === "equipes" && (
             <Teams
               people={people}
               teams={teamList}
               edit={(team, index) => setEditingTeam({ team, index })}
             />
           )}{" "}
-          {view === "tags" && (
+          {!isLoading && view === "tags" && (
             <TagsPage
               tags={tags}
               lastEjc={lastEjc}
@@ -489,7 +430,7 @@ function Dashboard({
     <>
       <section className="relative overflow-hidden rounded-3xl bg-[#111] px-5 py-7 text-white sm:rounded-[2rem] sm:px-7 sm:py-9 md:px-10">
         <div className="absolute -right-20 -top-24 size-72 rounded-full border-[45px] border-[#f47a20]/30" />
-        <img src="/ejc-logo-transparent.png" alt="" className="absolute right-4 top-1/2 hidden h-[86%] w-[34%] -translate-y-1/2 object-contain opacity-30 md:block lg:right-8" />
+        <img src="/ejc-logo-brand.png" alt="" className="absolute right-4 top-1/2 hidden h-[86%] w-[34%] -translate-y-1/2 object-contain opacity-30 md:block lg:right-8" />
         <div className="relative max-w-2xl">
           <span className="text-sm font-bold uppercase tracking-[.2em] text-[#ff9a4d]">
             Banco de talentos do encontro
