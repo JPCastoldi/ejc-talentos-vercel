@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   BookOpen,
   Camera,
   ChevronRight,
@@ -35,6 +36,7 @@ type Person = {
   history: string[];
   birthYear?: number;
   active?: boolean;
+  inactiveReason?: string;
   note: string;
   photo?: string;
 };
@@ -137,6 +139,7 @@ export default function Home() {
     [teamList, setTeamList] = useState<string[][]>(defaultTeams.map((team) => [team[0], ...team.slice(1).map(normalizeTag)])),
     [query, setQuery] = useState(""),
     [selected, setSelected] = useState<Person | null>(null),
+    [deactivating, setDeactivating] = useState<Person | null>(null),
     [editing, setEditing] = useState<Person | null>(null),
     [editingTeam, setEditingTeam] = useState<{
       team: string[];
@@ -230,6 +233,7 @@ export default function Home() {
       history,
       birthYear: Number(fd.get("birthYear")) || undefined,
       active: original?.active !== false,
+      inactiveReason: original?.inactiveReason,
       note: String(fd.get("note") || ""),
       photo,
     };
@@ -249,12 +253,31 @@ export default function Home() {
     setSelected(null);
     setView(p.kind === "jovem" ? "jovens" : "tios");
   }
-  async function toggleActive(person: Person) {
+  async function updateActiveStatus(person: Person, active: boolean, inactiveReason?: string) {
     if (person.kind !== "jovem") return;
-    const updated = { ...person, active: person.active === false };
+    const previous = people;
+    const updated = {
+      ...person,
+      active,
+      inactiveReason: active ? undefined : inactiveReason,
+    };
     setPeople((items) => items.map((item) => item.id === person.id ? updated : item));
     setSelected(updated);
-    await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"person",person:updated})});
+    const response = await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"personStatus",id:person.id,active,inactiveReason})});
+    if (!response.ok) {
+      setPeople(previous);
+      setSelected(person);
+      window.alert("Não foi possível alterar o status do jovem.");
+    }
+  }
+  function toggleActive(person: Person) {
+    if (person.kind !== "jovem") return;
+    if (person.active === false) {
+      void updateActiveStatus(person, true);
+      return;
+    }
+    setSelected(null);
+    setDeactivating(person);
   }
   async function deleteTag(tag: string) {
     if (!window.confirm(`Excluir a tag "${tag}" dos perfis e das equipes?`)) return;
@@ -385,8 +408,6 @@ export default function Home() {
           {view === "tags" && (
             <TagsPage
               tags={tags}
-              people={people}
-              open={setSelected}
               lastEjc={lastEjc}
               setLastEjc={(value: number) => {
                 if (!Number.isInteger(value) || value < 1) return;
@@ -429,6 +450,16 @@ export default function Home() {
         save={save}
         tags={tags}
         lastEjc={lastEjc}
+      />
+      <DeactivateDialog
+        person={deactivating}
+        close={() => setDeactivating(null)}
+        save={(reason) => {
+          if (!deactivating) return;
+          const person = deactivating;
+          setDeactivating(null);
+          void updateActiveStatus(person, false, reason);
+        }}
       />
       <TeamEdit
         data={editingTeam}
@@ -599,34 +630,42 @@ function Directory({
   );
 }
 function Card({ p, i, open }: { p: Person; i: number; open: () => void }) {
+  const inactive = p.kind === "jovem" && p.active === false;
   return (
     <button
       onClick={open}
-      className="group overflow-hidden rounded-2xl border border-[#dedacf] bg-white text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
+      className={`group min-w-0 overflow-hidden rounded-2xl border text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg ${inactive ? "border-2 border-[#b42318] bg-[#fff4f2]" : "border-[#dedacf] bg-white"}`}
     >
       <div
         className="h-1.5"
-        style={{ background: colors[i % colors.length] }}
+        style={{ background: inactive ? "#b42318" : colors[i % colors.length] }}
       />
       <div className="p-5">
         <div className="flex items-start gap-4">
           <Avatar name={p.name} photo={p.photo} c={colors[i % colors.length]} />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h3 className="truncate font-serif text-xl font-bold">{p.name}</h3>
             <p className="truncate text-sm text-[#73807c]">{p.community}</p>
-            {p.kind === "jovem" && p.active === false && <span className="mt-1 inline-block rounded-full bg-[#eee] px-2 py-0.5 text-[11px] font-bold text-[#777]">Inativo</span>}
+            {inactive && <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-[#b42318] px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-white"><AlertTriangle size={12}/> Inativo</span>}
           </div>
         </div>
-        <div className="mt-5">
-          <span className="rounded-full bg-[#fff0e4] px-3 py-1 text-xs font-bold text-[#c9580d]">
-            ★ {p.main}
-          </span>
-        </div>
-        <p className="mt-4 line-clamp-2 text-sm leading-6 text-[#65716e]">
-          {p.note}
-        </p>
+        {inactive ? (
+          <div className="mt-5 rounded-xl border border-[#f4b8b1] bg-white/70 p-3">
+            <p className="text-xs font-bold uppercase tracking-wide text-[#b42318]">Motivo da inativação</p>
+            <p className="mt-1 line-clamp-2 break-words text-sm text-[#67251f]">{p.inactiveReason || "Motivo não informado"}</p>
+          </div>
+        ) : (
+          <>
+            <div className="mt-5">
+              <span className="inline-block max-w-full truncate rounded-full bg-[#fff0e4] px-3 py-1 text-xs font-bold text-[#c9580d]">
+                ★ {p.main}
+              </span>
+            </div>
+            <p className="mt-4 line-clamp-2 break-words text-sm leading-6 text-[#65716e]">{p.note}</p>
+          </>
+        )}
         <div className="mt-5 flex justify-between border-t border-[#eeeae1] pt-4 text-xs text-[#7d8784]">
-          <span>{p.current}</span>
+          <span className="min-w-0 truncate pr-3">{inactive ? "Clique para ver o motivo" : p.current}</span>
           <ChevronRight size={17} />
         </div>
       </div>
@@ -670,7 +709,7 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
           return (
             <article
               key={t[0]}
-              className="rounded-2xl border border-[#dedacf] bg-white p-5 shadow-sm"
+              className="min-w-0 overflow-hidden rounded-2xl border border-[#dedacf] bg-white p-5 shadow-sm"
             >
               <div className="flex justify-between gap-3">
                 <span
@@ -684,12 +723,12 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
                 </span>
                 <div className="flex items-center gap-2"><span className="text-xs text-[#84908c]">{matches.length} compatíveis</span><Button variant="ghost" size="icon-sm" onClick={()=>edit(t,i)} aria-label={`Editar ${t[0]}`}><Pencil size={15}/></Button></div>
               </div>
-              <h2 className="mt-4 font-serif text-xl font-bold">{t[0]}</h2>
+              <h2 className="mt-4 break-words font-serif text-xl font-bold">{t[0]}</h2>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {t.slice(1).map((x) => (
                   <span
                     key={x}
-                    className="rounded-full bg-[#f0eee8] px-2.5 py-1 text-xs"
+                    className="max-w-full break-all rounded-full bg-[#f0eee8] px-2.5 py-1 text-xs"
                   >
                     {x}
                   </span>
@@ -701,9 +740,9 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
                 </p>
                 {matches.length ? (
                   matches.map(({ p }) => (
-                    <div key={p.id} className="flex items-center gap-2 py-1">
+                    <div key={p.id} className="flex min-w-0 items-center gap-2 py-1">
                       <Avatar name={p.name} photo={p.photo} c={colors[p.id % 6]} />
-                      <b className="text-sm">{p.name}</b>
+                      <b className="min-w-0 break-words text-sm">{p.name}</b>
                     </div>
                   ))
                 ) : (
@@ -719,13 +758,13 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
     </>
   );
 }
-function TagsPage({ tags, value, setValue, add, remove, people, open, lastEjc, setLastEjc }: any) {
+function TagsPage({ tags, value, setValue, add, remove, lastEjc, setLastEjc }: any) {
   return (
     <>
       <p className="eyebrow">Configuração</p>
       <h1 className="page-title">Tags e talentos</h1>
       <p className="mt-2 text-[#687572]">
-        Consulte as pessoas por talento e crie características para os perfis e equipes.
+        Crie e organize as características usadas nos perfis e nas equipes.
       </p>
       <div className="mt-6 max-w-sm rounded-2xl border bg-white p-5">
         <label className="field">
@@ -734,7 +773,7 @@ function TagsPage({ tags, value, setValue, add, remove, people, open, lastEjc, s
           <small>Experiências de encontros posteriores serão bloqueadas.</small>
         </label>
       </div>
-      <div className="mt-7 rounded-2xl border bg-white p-6">
+      <div className="mt-7 min-w-0 rounded-2xl border bg-white p-4 sm:p-6">
         <div className="flex flex-col gap-2 sm:flex-row">
           <input
             value={value}
@@ -755,32 +794,13 @@ function TagsPage({ tags, value, setValue, add, remove, people, open, lastEjc, s
                 borderColor: colors[i % 6] + "55",
                 color: colors[i % 6],
               }}
-              className="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold"
+              className="inline-flex max-w-full min-w-0 items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold sm:px-4"
             >
-              {t}
-              <button type="button" onClick={() => remove(t)} aria-label={`Excluir tag ${t}`} className="grid size-6 place-items-center rounded-full hover:bg-black/10">×</button>
+              <span className="min-w-0 break-all">{t}</span>
+              <button type="button" onClick={() => remove(t)} aria-label={`Excluir tag ${t}`} className="grid size-6 shrink-0 place-items-center rounded-full hover:bg-black/10">×</button>
             </span>
           ))}
         </div>
-      </div>
-      <div className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {tags.map((tag: string, index: number) => {
-          const tagged = people.filter((person: Person) => person.tags.includes(tag) || person.main === tag);
-          return <section key={tag} className="rounded-2xl border bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="font-serif text-xl font-bold capitalize">{tag}</h2>
-              <span className="text-xs text-[#7d8784]">{tagged.length} pessoa(s)</span>
-            </div>
-            <div className="mt-4 grid gap-2">
-              {tagged.length ? tagged.map((person: Person) => (
-                <button key={person.id} onClick={() => open(person)} className="flex items-center gap-3 rounded-xl border p-3 text-left hover:bg-[#fff8f2]">
-                  <Avatar name={person.name} photo={person.photo} c={colors[(person.id + index) % colors.length]} />
-                  <span><b className="block text-sm">{person.name}</b><small className="text-[#7d8784]">{person.kind === "jovem" ? "Jovem" : "Casal de tios"}</small></span>
-                </button>
-              )) : <p className="text-sm text-[#8b9491]">Nenhuma pessoa associada.</p>}
-            </div>
-          </section>;
-        })}
       </div>
     </>
   );
@@ -799,6 +819,7 @@ function Profile({
   toggleActive: () => void;
 }) {
   if (!person) return null;
+  const inactive = person.kind === "jovem" && person.active === false;
   const rec = teams
     .map((t) => ({
       n: t[0],
@@ -815,24 +836,33 @@ function Profile({
             Detalhes e equipes recomendadas.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-wrap gap-3 border-b pb-5 sm:flex-nowrap sm:gap-4">
+        <div className={`flex flex-wrap gap-3 border-b pb-5 sm:flex-nowrap sm:gap-4 ${inactive ? "border-[#efaaa3]" : ""}`}>
           <Avatar name={person.name} photo={person.photo} c={colors[person.id % 6]} />
           <div className="min-w-0 flex-1">
-            <h2 className="font-serif text-2xl font-bold">{person.name}</h2>
-            <p className="text-sm text-[#6f7b77]">
+            <h2 className="break-words font-serif text-2xl font-bold">{person.name}</h2>
+            <p className="break-words text-sm text-[#6f7b77]">
               {person.kind === "jovem" ? "Jovem" : "Casal de tios"} ·{" "}
               {person.community}
             </p>
+            {inactive && <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-[#b42318] px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-white"><AlertTriangle size={13}/> Jovem inativo</span>}
           </div>
-          <div className="flex w-full gap-2 sm:w-auto sm:flex-col">
-            <Button className="flex-1 sm:flex-none" variant="outline" size="sm" onClick={edit}><Pencil/> Editar</Button>
+          <div className="flex w-full flex-col gap-2 sm:w-auto">
+            {!inactive && <Button className="w-full" variant="outline" size="sm" onClick={edit}><Pencil/> Editar</Button>}
             {person.kind === "jovem" && (
-              <Button className="flex-1 sm:flex-none" variant="outline" size="sm" onClick={toggleActive}>
+              <Button className={`w-full ${inactive ? "border-[#17803d] bg-[#eefbf2] text-[#116530] hover:bg-[#dff5e6]" : "border-[#e3a49e] text-[#a52a20] hover:bg-[#fff1ef]"}`} variant="outline" size="sm" onClick={toggleActive}>
                 {person.active === false ? "Ativar jovem" : "Desativar jovem"}
               </Button>
             )}
           </div>
         </div>
+        {inactive ? (
+          <div className="rounded-2xl border-2 border-[#b42318] bg-[#fff4f2] p-5 sm:p-6">
+            <div className="flex items-center gap-2 text-[#b42318]"><AlertTriangle className="shrink-0"/><p className="font-serif text-xl font-bold">Este jovem está inativo</p></div>
+            <p className="mt-4 text-xs font-extrabold uppercase tracking-wider text-[#8f241b]">Motivo da inativação</p>
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-[#57241f]">{person.inactiveReason || "Motivo não informado."}</p>
+            <p className="mt-5 border-t border-[#efaaa3] pt-4 text-sm text-[#7b3932]">As informações do perfil e as recomendações de equipes ficam ocultas enquanto o jovem estiver inativo.</p>
+          </div>
+        ) : <>
         <div className="grid gap-5 sm:grid-cols-2">
           <Info t="Talento principal">
             <span className="rounded-full bg-[#fff0e4] px-3 py-1 text-sm font-bold text-[#c9580d]">
@@ -883,6 +913,56 @@ function Profile({
             ))}
           </div>
         </div>
+        </>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DeactivateDialog({
+  person,
+  close,
+  save,
+}: {
+  person: Person | null;
+  close: () => void;
+  save: (reason: string) => void;
+}) {
+  if (!person) return null;
+  return (
+    <Dialog open onOpenChange={close}>
+      <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 pr-8 font-serif text-2xl text-[#9b281f]"><AlertTriangle className="shrink-0"/> Inativar jovem</DialogTitle>
+          <DialogDescription>
+            Informe por que {person.name} ficará inativo. O motivo será exibido ao abrir o perfil.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          action={(formData) => {
+            const reason = String(formData.get("inactiveReason") || "").trim();
+            if (!reason) return;
+            save(reason);
+          }}
+          className="grid gap-4"
+        >
+          <label className="field">
+            Motivo da inativação
+            <textarea
+              name="inactiveReason"
+              rows={4}
+              required
+              minLength={3}
+              autoFocus
+              placeholder="Ex.: completou 30 anos, mudou de comunidade..."
+            />
+            <small>Esta informação ficará visível no perfil enquanto ele estiver inativo.</small>
+          </label>
+          <DialogFooter className="[&_button]:w-full sm:[&_button]:w-auto">
+            <Button type="button" variant="outline" onClick={close}>Cancelar</Button>
+            <Button type="submit" className="bg-[#b42318] text-white hover:bg-[#8e1c13]">Confirmar inativação</Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -964,7 +1044,7 @@ function Add({
                       )
                     }
                     placeholder="Ex.: Equipe de Círculo — 18º EJC"
-                    className="flex-1"
+                    className="min-w-0 flex-1"
                     required
                   />
                   {historyItems.length > 1 && (

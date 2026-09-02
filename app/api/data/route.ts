@@ -17,10 +17,29 @@ export async function POST(req:Request) {
   if (!connectionString()) return NextResponse.json({error:"Banco não configurado"},{status:503});
   const body=await req.json(); const sql=db(); try {
     await setup(sql);
+    if(body.type==="personStatus") {
+      const rows=await sql`SELECT data FROM ejc_people WHERE id=${body.id} LIMIT 1`;
+      if(!rows.length) return NextResponse.json({error:"Perfil não encontrado."},{status:404});
+      const person=rows[0].data as Record<string, any>;
+      if(person.kind !== "jovem") return NextResponse.json({error:"Somente jovens possuem status de atividade."},{status:400});
+      const active=body.active !== false;
+      const inactiveReason=String(body.inactiveReason || "").trim();
+      if(!active && !inactiveReason) return NextResponse.json({error:"Informe o motivo da inativação."},{status:400});
+      const updated: Record<string, any>={...person,active};
+      if(active) delete updated.inactiveReason;
+      else updated.inactiveReason=inactiveReason;
+      await sql`UPDATE ejc_people SET data=${sql.json(updated)} WHERE id=${body.id}`;
+    }
     if(body.type==="person") {
       const person = body.person;
       person.main = String(person.main || "").trim().toLocaleLowerCase("pt-BR");
       person.tags = [...new Set((person.tags || []).map((tag: unknown) => String(tag).trim().toLocaleLowerCase("pt-BR")).filter(Boolean))];
+      if(person.kind === "jovem" && person.active === false) {
+        person.inactiveReason = String(person.inactiveReason || "").trim();
+        if(!person.inactiveReason) return NextResponse.json({error:"Informe o motivo da inativação."},{status:400});
+      } else {
+        delete person.inactiveReason;
+      }
       const current=await sql`SELECT data->>'name' AS name FROM ejc_people WHERE id = ${person.id} LIMIT 1`;
       const nameChanged=!current.length || String(current[0].name || "").trim().toLocaleLowerCase("pt-BR") !== String(person.name || "").trim().toLocaleLowerCase("pt-BR");
       if(nameChanged) {
