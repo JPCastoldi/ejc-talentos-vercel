@@ -13,6 +13,7 @@ import {
   Search,
   Tags,
   UsersRound,
+  ZoomIn,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,6 +65,12 @@ const colors = [
   "#2d2d2d",
 ];
 const normalizeTag = (value: string) => value.trim().toLocaleLowerCase("pt-BR");
+const displayTag = (value: string) => {
+  const normalized = normalizeTag(value);
+  return normalized
+    ? normalized.charAt(0).toLocaleUpperCase("pt-BR") + normalized.slice(1)
+    : "";
+};
 
 export default function Home() {
   const [view, setView] = useState("inicio"),
@@ -71,6 +78,7 @@ export default function Home() {
     [teamList, setTeamList] = useState<string[][]>(defaultTeams.map((team) => [team[0], ...team.slice(1).map(normalizeTag)])),
     [query, setQuery] = useState(""),
     [selected, setSelected] = useState<Person | null>(null),
+    [photoPreview, setPhotoPreview] = useState<{ name: string; src: string } | null>(null),
     [deactivating, setDeactivating] = useState<Person | null>(null),
     [editing, setEditing] = useState<Person | null>(null),
     [editingTeam, setEditingTeam] = useState<{
@@ -213,7 +221,7 @@ export default function Home() {
     setDeactivating(person);
   }
   async function deleteTag(tag: string) {
-    if (!window.confirm(`Excluir a tag "${tag}" dos perfis e das equipes?`)) return;
+    if (!window.confirm(`Excluir a tag "${displayTag(tag)}" dos perfis e das equipes?`)) return;
     const normalized = normalizeTag(tag);
     const updatedPeople = people.map((person) => {
       const personTags = person.tags.filter((item) => normalizeTag(item) !== normalized);
@@ -375,12 +383,14 @@ export default function Home() {
         person={selected}
         teams={teamList}
         close={() => setSelected(null)}
+        openPhoto={(person) => person.photo && setPhotoPreview({ name: person.name, src: person.photo })}
         edit={() => {
           setEditing(selected);
           setSelected(null);
         }}
         toggleActive={() => selected && toggleActive(selected)}
       />
+      <PhotoPreview data={photoPreview} close={() => setPhotoPreview(null)} />
       <Add
         open={adding || !!editing}
         person={editing}
@@ -599,7 +609,7 @@ function Card({ p, i, open }: { p: Person; i: number; open: () => void }) {
           <>
             <div className="mt-5 min-h-6">
               <span className="inline-block max-w-full truncate rounded-full bg-[#fff0e4] px-3 py-1 text-xs font-bold text-[#c9580d]">
-                ★ {p.main}
+                ★ {displayTag(p.main)}
               </span>
             </div>
             <p className="mt-4 min-h-12 line-clamp-2 break-words text-sm leading-6 text-[#65716e]">{p.note || "Sem observações cadastradas."}</p>
@@ -671,7 +681,7 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
                     key={x}
                     className="max-w-full break-all rounded-full bg-[#f0eee8] px-2.5 py-1 text-xs"
                   >
-                    {x}
+                    {displayTag(x)}
                   </span>
                 ))}
               </div>
@@ -737,8 +747,8 @@ function TagsPage({ tags, value, setValue, add, remove, lastEjc, setLastEjc }: a
               }}
               className="inline-flex max-w-full min-w-0 items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold sm:px-4"
             >
-              <span className="min-w-0 break-all">{t}</span>
-              <button type="button" onClick={() => remove(t)} aria-label={`Excluir tag ${t}`} className="grid size-6 shrink-0 place-items-center rounded-full hover:bg-black/10">×</button>
+              <span className="min-w-0 break-all">{displayTag(t)}</span>
+              <button type="button" onClick={() => remove(t)} aria-label={`Excluir tag ${displayTag(t)}`} className="grid size-6 shrink-0 place-items-center rounded-full hover:bg-black/10">×</button>
             </span>
           ))}
         </div>
@@ -750,12 +760,14 @@ function Profile({
   person,
   teams,
   close,
+  openPhoto,
   edit,
   toggleActive,
 }: {
   person: Person | null;
   teams: string[][];
   close: () => void;
+  openPhoto: (person: Person) => void;
   edit: () => void;
   toggleActive: () => void;
 }) {
@@ -778,7 +790,12 @@ function Profile({
           </DialogDescription>
         </DialogHeader>
         <div className={`flex flex-wrap gap-3 border-b pb-5 sm:flex-nowrap sm:gap-4 ${inactive ? "border-[#efaaa3]" : ""}`}>
-          <Avatar name={person.name} photo={person.photo} c={colors[person.id % 6]} />
+          {person.photo ? (
+            <button type="button" onClick={() => openPhoto(person)} className="group/photo relative shrink-0 rounded-full outline-none ring-[#f47a20] focus-visible:ring-2 focus-visible:ring-offset-2" aria-label={`Ampliar foto de ${person.name}`}>
+              <Avatar name={person.name} photo={person.photo} c={colors[person.id % 6]} />
+              <span className="absolute inset-0 grid place-items-center rounded-full bg-black/0 text-white opacity-0 transition group-hover/photo:bg-black/45 group-hover/photo:opacity-100 group-focus-visible/photo:bg-black/45 group-focus-visible/photo:opacity-100"><ZoomIn size={18}/></span>
+            </button>
+          ) : <Avatar name={person.name} c={colors[person.id % 6]} />}
           <div className="min-w-0 flex-1">
             <h2 className="break-words font-serif text-2xl font-bold">{person.name}</h2>
             <p className="break-words text-sm text-[#6f7b77]">
@@ -807,7 +824,7 @@ function Profile({
         <div className="grid gap-5 sm:grid-cols-2">
           <Info t="Talento principal">
             <span className="rounded-full bg-[#fff0e4] px-3 py-1 text-sm font-bold text-[#c9580d]">
-              ★ {person.main}
+              ★ {displayTag(person.main)}
             </span>
           </Info>
           <Info t="Atuação atual">{person.current}</Info>
@@ -832,7 +849,7 @@ function Profile({
                   key={x}
                   className="rounded-full bg-[#f0eee8] px-2 py-1 text-xs"
                 >
-                  {x}
+                  {displayTag(x)}
                 </span>
               ))}
             </div>
@@ -855,6 +872,29 @@ function Profile({
           </div>
         </div>
         </>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PhotoPreview({
+  data,
+  close,
+}: {
+  data: { name: string; src: string } | null;
+  close: () => void;
+}) {
+  if (!data) return null;
+  return (
+    <Dialog open onOpenChange={close}>
+      <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-hidden p-2 sm:max-w-3xl sm:p-3">
+        <DialogHeader>
+          <DialogTitle className="sr-only">Foto ampliada de {data.name}</DialogTitle>
+          <DialogDescription className="sr-only">Visualização ampliada da foto do perfil.</DialogDescription>
+        </DialogHeader>
+        <div className="grid min-h-48 place-items-center overflow-hidden rounded-xl bg-[#17120f]">
+          <img src={data.src} alt={`Foto ampliada de ${data.name}`} className="max-h-[82dvh] max-w-full object-contain" />
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -964,7 +1004,7 @@ function Add({
           <label className="field">Talento principal
             <select name="main" defaultValue={person?.main || ""} required>
               <option value="" disabled>Selecione um talento</option>
-              {tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+              {tags.map((tag) => <option key={tag} value={tag}>{displayTag(tag)}</option>)}
             </select>
           </label>
           <Field label="Ano de nascimento" name="birthYear" type="number" min={1900} max={new Date().getFullYear()} defaultValue={person?.birthYear} />
@@ -1021,7 +1061,7 @@ function Add({
             Pontos fortes / tags
             <input
               name="tags"
-              defaultValue={person?.tags.join(", ")}
+              defaultValue={person?.tags.map(displayTag).join(", ")}
               placeholder="Comunicação, acolhimento, instrumento"
               required
             />
@@ -1057,5 +1097,5 @@ function Field({
 }
 
 function TeamEdit({data,close,save}:{data:{team:string[];index:number}|null;close:()=>void;save:(f:FormData)=>void}){
-  return <Dialog open={!!data} onOpenChange={close}><DialogContent><DialogHeader><DialogTitle className="font-serif text-2xl">Editar equipe</DialogTitle><DialogDescription>Altere o nome e os talentos mais importantes para esta equipe.</DialogDescription></DialogHeader>{data&&<form action={save} className="grid gap-4"><Field label="Nome da equipe" name="name" defaultValue={data.team[0]} required/><label className="field">Pontos fortes buscados<input name="skills" defaultValue={data.team.slice(1).join(", ")}/><small>Separe por vírgulas. Essas características definem as sugestões de pessoas.</small></label><DialogFooter><Button type="button" variant="outline" onClick={close}>Cancelar</Button><Button type="submit" className="bg-[#f47a20] text-black hover:bg-[#df6813]">Salvar equipe</Button></DialogFooter></form>}</DialogContent></Dialog>
+  return <Dialog open={!!data} onOpenChange={close}><DialogContent><DialogHeader><DialogTitle className="font-serif text-2xl">Editar equipe</DialogTitle><DialogDescription>Altere o nome e os talentos mais importantes para esta equipe.</DialogDescription></DialogHeader>{data&&<form action={save} className="grid gap-4"><Field label="Nome da equipe" name="name" defaultValue={data.team[0]} required/><label className="field">Pontos fortes buscados<input name="skills" defaultValue={data.team.slice(1).map(displayTag).join(", ")}/><small>Separe por vírgulas. Essas características definem as sugestões de pessoas.</small></label><DialogFooter><Button type="button" variant="outline" onClick={close}>Cancelar</Button><Button type="submit" className="bg-[#f47a20] text-black hover:bg-[#df6813]">Salvar equipe</Button></DialogFooter></form>}</DialogContent></Dialog>
 }
