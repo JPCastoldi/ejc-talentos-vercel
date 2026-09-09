@@ -38,6 +38,7 @@ type Person = {
   birthYear?: number;
   active?: boolean;
   inactiveReason?: string;
+  servedLastEjc?: boolean;
   note: string;
   photo?: string;
 };
@@ -90,6 +91,7 @@ export default function Home() {
     [newTag, setNewTag] = useState("");
   const [lastEjc, setLastEjc] = useState(18);
   const [isLoading, setIsLoading] = useState(true);
+  const [formError, setFormError] = useState("");
   useEffect(() => {
     fetch("/api/data").then(r=>r.ok?r.json():Promise.reject()).then(data=>{
       if(Array.isArray(data.people))setPeople(data.people.map((person: Person & { history?: string | string[] })=>({
@@ -127,40 +129,37 @@ export default function Home() {
         .includes(query.toLowerCase()),
   );
   async function save(fd: FormData, original?: Person) {
+    setFormError("");
     const name = String(fd.get("name") || "").trim();
     const normalizedName = name.toLocaleLowerCase("pt-BR");
     const originalName = original?.name.trim().toLocaleLowerCase("pt-BR");
     if (normalizedName !== originalName && people.some((person) => String(person.id) !== String(original?.id) && person.name.trim().toLocaleLowerCase("pt-BR") === normalizedName)) {
-      window.alert("Já existe uma pessoa cadastrada com esse nome.");
+      setFormError("Já existe uma pessoa cadastrada com esse nome. Confira o nome e tente novamente.");
       return;
     }
     const history = fd.getAll("history").map((item) => String(item).trim()).filter(Boolean);
-    if (!history.length) {
-      window.alert("Adicione pelo menos uma experiência anterior.");
-      return;
-    }
     const invalidEjc = history.find((item) => {
       const match = item.match(/(\d+)\s*º?/);
       return !match || Number(match[1]) > lastEjc;
     });
     if (invalidEjc) {
-      window.alert(`Informe o número do EJC em cada experiência. O último realizado é o ${lastEjc}º EJC.`);
+      setFormError(`Confira as experiências anteriores. Use um número de EJC válido até o ${lastEjc}º EJC.`);
       return;
     }
     const normalizedTags = String(fd.get("tags") || "").split(",").map(normalizeTag).filter(Boolean);
     if (!normalizedTags.length) {
-      window.alert("Adicione pelo menos um ponto forte.");
+      setFormError("Adicione pelo menos um ponto forte antes de salvar o perfil.");
       return;
     }
     const file = fd.get("photo") as File;
     let photo = original?.photo;
     if (file?.size) {
       if (file.size > 5 * 1024 * 1024) {
-        window.alert("A foto deve ter no máximo 5 MB. Reduza o tamanho da imagem e tente novamente.");
+        setFormError("A foto deve ter no máximo 5 MB. Reduza o tamanho da imagem e tente novamente.");
         return;
       }
       const upload=new FormData(); upload.set("file",file); const res=await fetch("/api/upload",{method:"POST",body:upload});
-      if(!res.ok) { const result=await res.json().catch(()=>({})); window.alert(result.error || "Não foi possível enviar a foto."); return; }
+      if(!res.ok) { const result=await res.json().catch(()=>({})); setFormError(result.error || "Não foi possível enviar a foto."); return; }
       photo=(await res.json()).url;
     }
     const p: Person = {
@@ -175,6 +174,7 @@ export default function Home() {
       birthYear: Number(fd.get("birthYear")) || undefined,
       active: original?.active !== false,
       inactiveReason: original?.inactiveReason,
+      servedLastEjc: fd.get("servedLastEjc") === "on",
       note: String(fd.get("note") || ""),
       photo,
     };
@@ -186,16 +186,16 @@ export default function Home() {
     if (!saved.ok) {
       const result = await saved.json().catch(() => ({}));
       setPeople(people);
-      window.alert(result.error || "Não foi possível salvar o perfil.");
+      setFormError(result.error || "Não foi possível salvar o perfil. Confira os dados e tente novamente.");
       return;
     }
     setAdding(false);
     setEditing(null);
     setSelected(null);
+    setFormError("");
     setView(p.kind === "jovem" ? "jovens" : "tios");
   }
   async function updateActiveStatus(person: Person, active: boolean, inactiveReason?: string) {
-    if (person.kind !== "jovem") return;
     const previous = people;
     const updated = {
       ...person,
@@ -208,11 +208,10 @@ export default function Home() {
     if (!response.ok) {
       setPeople(previous);
       setSelected(person);
-      window.alert("Não foi possível alterar o status do jovem.");
+      window.alert("Não foi possível alterar o status do perfil.");
     }
   }
   function toggleActive(person: Person) {
-    if (person.kind !== "jovem") return;
     if (person.active === false) {
       void updateActiveStatus(person, true);
       return;
@@ -280,7 +279,7 @@ export default function Home() {
             </span>
           </button>
           <Button
-            onClick={() => setAdding(true)}
+            onClick={() => { setFormError(""); setAdding(true); }}
             className="h-10 shrink-0 rounded-full bg-[#f47a20] px-3 text-black hover:bg-[#df6813] sm:px-5"
           >
             <Plus /> <span className="hidden sm:inline">Novo perfil</span><span className="sm:hidden">Novo</span>
@@ -344,7 +343,7 @@ export default function Home() {
               query={query}
               setQuery={setQuery}
               open={setSelected}
-              add={() => setAdding(true)}
+              add={() => { setFormError(""); setAdding(true); }}
             />
           )}{" "}
           {!isLoading && view === "equipes" && (
@@ -385,6 +384,7 @@ export default function Home() {
         close={() => setSelected(null)}
         openPhoto={(person) => person.photo && setPhotoPreview({ name: person.name, src: person.photo })}
         edit={() => {
+          setFormError("");
           setEditing(selected);
           setSelected(null);
         }}
@@ -397,8 +397,10 @@ export default function Home() {
         close={() => {
           setAdding(false);
           setEditing(null);
+          setFormError("");
         }}
         save={save}
+        error={formError}
         tags={tags}
         lastEjc={lastEjc}
       />
@@ -461,8 +463,8 @@ function Dashboard({
           c={colors[0]}
         />
         <Stat
-          n={people.filter((p) => p.kind === "tios").length}
-          text="casais de tios"
+          n={people.filter((p) => p.kind === "tios" && p.active !== false).length}
+          text="casais de tios ativos"
           c={colors[1]}
         />
         <Stat n={teamCount} text="equipes mapeadas" c={colors[2]} />
@@ -581,7 +583,7 @@ function Directory({
   );
 }
 function Card({ p, i, open }: { p: Person; i: number; open: () => void }) {
-  const inactive = p.kind === "jovem" && p.active === false;
+  const inactive = p.active === false;
   return (
     <button
       onClick={open}
@@ -598,6 +600,7 @@ function Card({ p, i, open }: { p: Person; i: number; open: () => void }) {
             <h3 className="truncate font-serif text-xl font-bold">{p.name}</h3>
             <p className="truncate text-sm text-[#73807c]">{p.community}</p>
             {inactive && <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-[#b42318] px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-white"><AlertTriangle size={12}/> Inativo</span>}
+            {!inactive && p.servedLastEjc && <span className="mt-2 inline-flex rounded-full bg-[#fff0e4] px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-[#c9580d]">Serviu no último EJC</span>}
           </div>
         </div>
         {inactive ? (
@@ -649,12 +652,12 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
       <div className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {teams.map((t, i) => {
           const matches = people
-            .filter((p) => p.kind === "tios" || p.active !== false)
+            .filter((p) => p.active !== false)
             .map((p) => ({
               p,
               s: p.tags.filter((x) => t.slice(1).map(normalizeTag).includes(normalizeTag(x))).length,
             }))
-            .sort((a, b) => b.s - a.s)
+            .sort((a, b) => Number(b.p.servedLastEjc) - Number(a.p.servedLastEjc) || b.s - a.s)
             .filter((x) => x.s)
             .slice(0, 2);
           return (
@@ -691,9 +694,9 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
                 </p>
                 {matches.length ? (
                   matches.map(({ p }) => (
-                    <div key={p.id} className="flex min-w-0 items-center gap-2 py-1">
+                    <div key={p.id} className={`flex min-w-0 items-center gap-2 rounded-lg py-1 ${p.servedLastEjc ? "bg-[#fff5eb] px-2" : ""}`}>
                       <Avatar name={p.name} photo={p.photo} c={colors[p.id % 6]} />
-                      <b className="min-w-0 break-words text-sm">{p.name}</b>
+                      <span className="min-w-0"><b className="block break-words text-sm">{p.name}</b>{p.servedLastEjc && <small className="text-[10px] font-bold uppercase text-[#c9580d]">Serviu no último EJC</small>}</span>
                     </div>
                   ))
                 ) : (
@@ -772,7 +775,7 @@ function Profile({
   toggleActive: () => void;
 }) {
   if (!person) return null;
-  const inactive = person.kind === "jovem" && person.active === false;
+  const inactive = person.active === false;
   const rec = teams
     .map((t) => ({
       n: t[0],
@@ -802,23 +805,22 @@ function Profile({
               {person.kind === "jovem" ? "Jovem" : "Casal de tios"} ·{" "}
               {person.community}
             </p>
-            {inactive && <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-[#b42318] px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-white"><AlertTriangle size={13}/> Jovem inativo</span>}
+            {inactive && <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-[#b42318] px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-white"><AlertTriangle size={13}/> Perfil inativo</span>}
+            {!inactive && person.servedLastEjc && <span className="mt-2 inline-flex rounded-full bg-[#fff0e4] px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-[#c9580d]">Serviu no último EJC</span>}
           </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto">
             {!inactive && <Button className="w-full" variant="outline" size="sm" onClick={edit}><Pencil/> Editar</Button>}
-            {person.kind === "jovem" && (
-              <Button className={`w-full ${inactive ? "border-[#17803d] bg-[#eefbf2] text-[#116530] hover:bg-[#dff5e6]" : "border-[#e3a49e] text-[#a52a20] hover:bg-[#fff1ef]"}`} variant="outline" size="sm" onClick={toggleActive}>
-                {person.active === false ? "Ativar jovem" : "Desativar jovem"}
-              </Button>
-            )}
+            <Button className={`w-full ${inactive ? "border-[#17803d] bg-[#eefbf2] text-[#116530] hover:bg-[#dff5e6]" : "border-[#e3a49e] text-[#a52a20] hover:bg-[#fff1ef]"}`} variant="outline" size="sm" onClick={toggleActive}>
+              {person.active === false ? "Ativar perfil" : "Desativar perfil"}
+            </Button>
           </div>
         </div>
         {inactive ? (
           <div className="rounded-2xl border-2 border-[#b42318] bg-[#fff4f2] p-5 sm:p-6">
-            <div className="flex items-center gap-2 text-[#b42318]"><AlertTriangle className="shrink-0"/><p className="font-serif text-xl font-bold">Este jovem está inativo</p></div>
+            <div className="flex items-center gap-2 text-[#b42318]"><AlertTriangle className="shrink-0"/><p className="font-serif text-xl font-bold">Este perfil está inativo</p></div>
             <p className="mt-4 text-xs font-extrabold uppercase tracking-wider text-[#8f241b]">Motivo da inativação</p>
             <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-[#57241f]">{person.inactiveReason || "Motivo não informado."}</p>
-            <p className="mt-5 border-t border-[#efaaa3] pt-4 text-sm text-[#7b3932]">As informações do perfil e as recomendações de equipes ficam ocultas enquanto o jovem estiver inativo.</p>
+            <p className="mt-5 border-t border-[#efaaa3] pt-4 text-sm text-[#7b3932]">As informações e recomendações de equipes ficam ocultas enquanto o perfil estiver inativo.</p>
           </div>
         ) : <>
         <div className="grid gap-5 sm:grid-cols-2">
@@ -914,7 +916,7 @@ function DeactivateDialog({
     <Dialog open onOpenChange={close}>
       <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 pr-8 font-serif text-2xl text-[#9b281f]"><AlertTriangle className="shrink-0"/> Inativar jovem</DialogTitle>
+          <DialogTitle className="flex items-center gap-2 pr-8 font-serif text-2xl text-[#9b281f]"><AlertTriangle className="shrink-0"/> Inativar perfil</DialogTitle>
           <DialogDescription>
             Informe por que {person.name} ficará inativo. O motivo será exibido ao abrir o perfil.
           </DialogDescription>
@@ -963,13 +965,15 @@ function Add({
   person,
   close,
   save,
+  error,
   tags,
   lastEjc,
 }: {
   open: boolean;
   person: Person | null;
   close: () => void;
-  save: (f: FormData, original?: Person) => void;
+  save: (f: FormData, original?: Person) => Promise<void>;
+  error: string;
   tags: string[];
   lastEjc: number;
 }) {
@@ -990,7 +994,7 @@ function Add({
             {person ? "Atualize os dados e a foto deste perfil." : "Cadastre um jovem ou casal de tios."}
           </DialogDescription>
         </DialogHeader>
-        <form action={(fd)=>save(fd,person??undefined)} className="grid gap-4 sm:grid-cols-2">
+        <form key={person?.id ?? "new"} onSubmit={(event) => { event.preventDefault(); void save(new FormData(event.currentTarget), person ?? undefined); }} className="grid gap-4 sm:grid-cols-2">
           <label className="field sm:col-span-2">Foto do perfil<div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#e5b895] bg-[#fff8f2] p-3 sm:flex-row sm:items-center sm:gap-4 sm:p-4">{person?.photo?<span className="size-16 shrink-0 overflow-hidden rounded-full"><img src={person.photo} alt="Foto atual" className="size-full object-cover"/></span>:<span className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f47a20]/15 text-[#c9580d]"><Camera/></span>}<input type="file" name="photo" accept="image/*" className="min-w-0 w-full text-sm"/></div><small>Envie uma imagem de no máximo 5 MB. A foto será salva com o cadastro.</small></label>
           <Field label="Nome completo / nome do casal" name="name" defaultValue={person?.name} required />
           <label className="field">
@@ -1009,8 +1013,12 @@ function Add({
           </label>
           <Field label="Ano de nascimento" name="birthYear" type="number" min={1900} max={new Date().getFullYear()} defaultValue={person?.birthYear} />
           <Field label="Atribuição atual" name="current" defaultValue={person?.current} />
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[#f0c7a8] bg-[#fff8f2] p-4 sm:col-span-2">
+            <input type="checkbox" name="servedLastEjc" defaultChecked={person?.servedLastEjc} className="mt-0.5 size-5 shrink-0 accent-[#f47a20]" />
+            <span className="min-w-0"><b className="block text-sm text-[#423832]">Serviu no {lastEjc}º EJC</b><small className="mt-1 block leading-5 text-[#7c7069]">Marque para esta pessoa aparecer primeiro nas sugestões de montagem das equipes.</small></span>
+          </label>
           <div className="field sm:col-span-2">
-            <span>Experiências anteriores</span>
+            <span>Experiências anteriores <small>(opcional)</small></span>
             <div className="grid gap-2">
               {historyItems.map((experience, index) => (
                 <div key={index} className="flex items-stretch gap-2">
@@ -1026,7 +1034,6 @@ function Add({
                     }
                     placeholder="Ex.: Equipe de Círculo — 18º EJC"
                     className="min-w-0 flex-1"
-                    required
                   />
                   {historyItems.length > 1 && (
                     <Button
@@ -1055,7 +1062,7 @@ function Add({
             >
               <Plus /> Adicionar outro EJC
             </Button>
-            <small>Cadastre separadamente cada EJC e a equipe. O último realizado é o {lastEjc}º EJC.</small>
+            <small>Se houver experiências, cadastre separadamente cada EJC e a equipe. O último realizado é o {lastEjc}º EJC.</small>
           </div>
           <label className="field sm:col-span-2">
             Pontos fortes / tags
@@ -1071,6 +1078,12 @@ function Add({
             Observações
             <textarea name="note" rows={3} defaultValue={person?.note} />
           </label>
+          {error && (
+            <div role="alert" className="flex items-start gap-3 rounded-xl border border-[#efaaa3] bg-[#fff1ef] p-4 text-sm text-[#84251d] sm:col-span-2">
+              <AlertTriangle className="mt-0.5 size-5 shrink-0" />
+              <div><b className="block">Não foi possível salvar</b><p className="mt-1 leading-5">{error}</p><small className="mt-1 block text-[#9a4c44]">Os dados preenchidos foram mantidos para você corrigir somente o necessário.</small></div>
+            </div>
+          )}
           <DialogFooter className="sm:col-span-2 [&_button]:w-full sm:[&_button]:w-auto">
             <Button type="button" variant="outline" onClick={close}>
               Cancelar

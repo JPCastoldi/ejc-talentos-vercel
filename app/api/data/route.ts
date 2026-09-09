@@ -21,7 +21,6 @@ export async function POST(req:Request) {
       const rows=await sql`SELECT data FROM ejc_people WHERE id=${body.id} LIMIT 1`;
       if(!rows.length) return NextResponse.json({error:"Perfil não encontrado."},{status:404});
       const person=rows[0].data as Record<string, any>;
-      if(person.kind !== "jovem") return NextResponse.json({error:"Somente jovens possuem status de atividade."},{status:400});
       const active=body.active !== false;
       const inactiveReason=String(body.inactiveReason || "").trim();
       if(!active && !inactiveReason) return NextResponse.json({error:"Informe o motivo da inativação."},{status:400});
@@ -34,7 +33,7 @@ export async function POST(req:Request) {
       const person = body.person;
       person.main = String(person.main || "").trim().toLocaleLowerCase("pt-BR");
       person.tags = [...new Set((person.tags || []).map((tag: unknown) => String(tag).trim().toLocaleLowerCase("pt-BR")).filter(Boolean))];
-      if(person.kind === "jovem" && person.active === false) {
+      if(person.active === false) {
         person.inactiveReason = String(person.inactiveReason || "").trim();
         if(!person.inactiveReason) return NextResponse.json({error:"Informe o motivo da inativação."},{status:400});
       } else {
@@ -46,7 +45,7 @@ export async function POST(req:Request) {
         const duplicate=await sql`SELECT id FROM ejc_people WHERE id <> ${person.id} AND lower(trim(data->>'name')) = lower(trim(${person.name})) LIMIT 1`;
         if(duplicate.length) return NextResponse.json({error:"Já existe uma pessoa cadastrada com esse nome."},{status:409});
       }
-      if(!person.history?.length || !person.tags.length) return NextResponse.json({error:"Experiências anteriores e pontos fortes são obrigatórios."},{status:400});
+      if(!person.tags.length) return NextResponse.json({error:"Adicione pelo menos um ponto forte."},{status:400});
       await sql`INSERT INTO ejc_people (id,data) VALUES (${person.id},${sql.json(person)}) ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data`;
     }
     if(body.type==="teams") await sql`INSERT INTO ejc_settings (key,data) VALUES ('teams',${sql.json(body.teams)}) ON CONFLICT (key) DO UPDATE SET data=EXCLUDED.data`;
