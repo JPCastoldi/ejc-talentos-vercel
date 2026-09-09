@@ -12,6 +12,7 @@ import {
   Plus,
   Search,
   Tags,
+  Trash2,
   UsersRound,
   ZoomIn,
 } from "lucide-react";
@@ -146,7 +147,7 @@ export default function Home() {
       setFormError(`Confira as experiências anteriores. Use um número de EJC válido até o ${lastEjc}º EJC.`);
       return;
     }
-    const normalizedTags = String(fd.get("tags") || "").split(",").map(normalizeTag).filter(Boolean);
+    const normalizedTags = fd.getAll("tags").map((item) => normalizeTag(String(item))).filter(Boolean);
     if (!normalizedTags.length) {
       setFormError("Adicione pelo menos um ponto forte antes de salvar o perfil.");
       return;
@@ -218,6 +219,23 @@ export default function Home() {
     }
     setSelected(null);
     setDeactivating(person);
+  }
+  async function deletePerson(person: Person) {
+    if (person.active !== false) return;
+    if (!window.confirm(`Excluir definitivamente o perfil de ${person.name}? Esta ação não pode ser desfeita.`)) return;
+    const previous = people;
+    setPeople((items) => items.filter((item) => item.id !== person.id));
+    setSelected(null);
+    try {
+      const response = await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"deletePerson",id:person.id})});
+      if (response.ok) return;
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.error || "Não foi possível excluir o perfil.");
+    } catch (error) {
+      setPeople(previous);
+      setSelected(person);
+      window.alert(error instanceof Error ? error.message : "Não foi possível excluir o perfil.");
+    }
   }
   async function deleteTag(tag: string) {
     if (!window.confirm(`Excluir a tag "${displayTag(tag)}" dos perfis e das equipes?`)) return;
@@ -389,6 +407,7 @@ export default function Home() {
           setSelected(null);
         }}
         toggleActive={() => selected && toggleActive(selected)}
+        deletePerson={() => selected && void deletePerson(selected)}
       />
       <PhotoPreview data={photoPreview} close={() => setPhotoPreview(null)} />
       <Add
@@ -766,6 +785,7 @@ function Profile({
   openPhoto,
   edit,
   toggleActive,
+  deletePerson,
 }: {
   person: Person | null;
   teams: string[][];
@@ -773,6 +793,7 @@ function Profile({
   openPhoto: (person: Person) => void;
   edit: () => void;
   toggleActive: () => void;
+  deletePerson: () => void;
 }) {
   if (!person) return null;
   const inactive = person.active === false;
@@ -813,6 +834,7 @@ function Profile({
             <Button className={`w-full ${inactive ? "border-[#17803d] bg-[#eefbf2] text-[#116530] hover:bg-[#dff5e6]" : "border-[#e3a49e] text-[#a52a20] hover:bg-[#fff1ef]"}`} variant="outline" size="sm" onClick={toggleActive}>
               {person.active === false ? "Ativar perfil" : "Desativar perfil"}
             </Button>
+            {inactive && <Button className="w-full border-[#b42318] bg-[#b42318] text-white hover:bg-[#8e1c13] hover:text-white" variant="outline" size="sm" onClick={deletePerson}><Trash2/> Excluir perfil</Button>}
           </div>
         </div>
         {inactive ? (
@@ -1064,16 +1086,22 @@ function Add({
             </Button>
             <small>Se houver experiências, cadastre separadamente cada EJC e a equipe. O último realizado é o {lastEjc}º EJC.</small>
           </div>
-          <label className="field sm:col-span-2">
-            Pontos fortes / tags
-            <input
-              name="tags"
-              defaultValue={person?.tags.map(displayTag).join(", ")}
-              placeholder="Comunicação, acolhimento, instrumento"
-              required
-            />
-            <small>Separe por vírgulas.</small>
-          </label>
+          <fieldset className="min-w-0 sm:col-span-2">
+            <legend className="text-[.82rem] font-bold text-[#53615e]">Pontos fortes / tags</legend>
+            {tags.length ? (
+              <div className="mt-2 grid max-h-48 gap-2 overflow-y-auto rounded-xl border border-[#d7d3c9] bg-white p-3 sm:grid-cols-2">
+                {tags.map((tag) => (
+                  <label key={tag} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-sm transition hover:border-[#f0c7a8] hover:bg-[#fff8f2]">
+                    <input type="checkbox" name="tags" value={tag} defaultChecked={person?.tags.some((item) => normalizeTag(item) === tag)} className="size-4 shrink-0 accent-[#f47a20]" />
+                    <span className="min-w-0 break-words">{displayTag(tag)}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-2 rounded-xl border border-dashed border-[#e2b994] bg-[#fff8f2] p-4 text-sm text-[#765f50]">Nenhuma tag cadastrada. Crie as tags na página “Tags e talentos” antes de adicionar um perfil.</div>
+            )}
+            <small className="mt-1.5 block text-xs text-[#8a9390]">Selecione pelo menos uma tag cadastrada.</small>
+          </fieldset>
           <label className="field sm:col-span-2">
             Observações
             <textarea name="note" rows={3} defaultValue={person?.note} />

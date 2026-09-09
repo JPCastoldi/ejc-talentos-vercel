@@ -17,6 +17,13 @@ export async function POST(req:Request) {
   if (!connectionString()) return NextResponse.json({error:"Banco não configurado"},{status:503});
   const body=await req.json(); const sql=db(); try {
     await setup(sql);
+    if(body.type==="deletePerson") {
+      const rows=await sql`SELECT data FROM ejc_people WHERE id=${body.id} LIMIT 1`;
+      if(!rows.length) return NextResponse.json({error:"Perfil não encontrado."},{status:404});
+      const person=rows[0].data as Record<string, any>;
+      if(person.active !== false) return NextResponse.json({error:"Somente perfis inativos podem ser excluídos."},{status:400});
+      await sql`DELETE FROM ejc_people WHERE id=${body.id}`;
+    }
     if(body.type==="personStatus") {
       const rows=await sql`SELECT data FROM ejc_people WHERE id=${body.id} LIMIT 1`;
       if(!rows.length) return NextResponse.json({error:"Perfil não encontrado."},{status:404});
@@ -33,6 +40,17 @@ export async function POST(req:Request) {
       const person = body.person;
       person.main = String(person.main || "").trim().toLocaleLowerCase("pt-BR");
       person.tags = [...new Set((person.tags || []).map((tag: unknown) => String(tag).trim().toLocaleLowerCase("pt-BR")).filter(Boolean))];
+      const tagSettings=await sql`SELECT data FROM ejc_settings WHERE key='tags' LIMIT 1`;
+      const savedPeople=await sql`SELECT data FROM ejc_people`;
+      const allowedTags=new Set<string>([
+        ...(Array.isArray(tagSettings[0]?.data) ? tagSettings[0].data.map(String) : []),
+        ...savedPeople.flatMap((row) => {
+          const saved=row.data as Record<string, any>;
+          return [...(Array.isArray(saved.tags) ? saved.tags.map(String) : []), String(saved.main || "")];
+        }),
+      ].map((tag) => tag.trim().toLocaleLowerCase("pt-BR")).filter(Boolean));
+      const unknownTag=[person.main,...person.tags].find((tag: string) => !allowedTags.has(tag));
+      if(unknownTag) return NextResponse.json({error:`A tag "${unknownTag}" não está cadastrada.`},{status:400});
       if(person.active === false) {
         person.inactiveReason = String(person.inactiveReason || "").trim();
         if(!person.inactiveReason) return NextResponse.json({error:"Informe o motivo da inativação."},{status:400});
