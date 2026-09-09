@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   BookOpen,
+  CalendarPlus,
   Camera,
   ChevronRight,
   CircleUserRound,
@@ -13,6 +14,7 @@ import {
   Search,
   Tags,
   Trash2,
+  UserPlus,
   UsersRound,
   ZoomIn,
 } from "lucide-react";
@@ -78,6 +80,7 @@ export default function Home() {
   const [view, setView] = useState("inicio"),
     [people, setPeople] = useState<Person[]>([]),
     [teamList, setTeamList] = useState<string[][]>(defaultTeams.map((team) => [team[0], ...team.slice(1).map(normalizeTag)])),
+    [eventAssignments, setEventAssignments] = useState<number[][]>(defaultTeams.map(() => [])),
     [query, setQuery] = useState(""),
     [selected, setSelected] = useState<Person | null>(null),
     [photoPreview, setPhotoPreview] = useState<{ name: string; src: string } | null>(null),
@@ -106,7 +109,11 @@ export default function Home() {
         main: normalizeTag(person.main || ""),
         active: person.active !== false,
       })));
-      if(data.teams?.length)setTeamList(data.teams.map((team: string[]) => [team[0], ...team.slice(1).map(normalizeTag)]));
+      const loadedTeams=data.teams?.length ? data.teams.map((team: string[]) => [team[0], ...team.slice(1).map(normalizeTag)]) : defaultTeams.map((team) => [team[0], ...team.slice(1).map(normalizeTag)]);
+      setTeamList(loadedTeams);
+      const nextEvent=(Number(data.lastEjc) || 18) + 1;
+      const storedAssignments=Number(data.eventNumber) === nextEvent ? data.eventAssignments : [];
+      setEventAssignments(Array.from({length:loadedTeams.length},(_,index)=>Array.isArray(storedAssignments?.[index]) ? storedAssignments[index].map(Number) : []));
       if(data.tags?.length)setCustomTags(data.tags.map(normalizeTag));
       if(Number.isInteger(data.lastEjc))setLastEjc(data.lastEjc);
     }).catch(()=>{}).finally(()=>setIsLoading(false));
@@ -198,16 +205,19 @@ export default function Home() {
   }
   async function updateActiveStatus(person: Person, active: boolean, inactiveReason?: string) {
     const previous = people;
+    const previousAssignments=eventAssignments;
     const updated = {
       ...person,
       active,
       inactiveReason: active ? undefined : inactiveReason,
     };
     setPeople((items) => items.map((item) => item.id === person.id ? updated : item));
+    if(!active)setEventAssignments((items)=>items.map((ids)=>ids.filter((id)=>id !== person.id)));
     setSelected(updated);
     const response = await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"personStatus",id:person.id,active,inactiveReason})});
     if (!response.ok) {
       setPeople(previous);
+      setEventAssignments(previousAssignments);
       setSelected(person);
       window.alert("Não foi possível alterar o status do perfil.");
     }
@@ -220,11 +230,37 @@ export default function Home() {
     setSelected(null);
     setDeactivating(person);
   }
+  async function saveAssignments(next: number[][], previous: number[][]) {
+    setEventAssignments(next);
+    try {
+      const response=await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"eventAssignments",eventNumber:lastEjc+1,assignments:next})});
+      if(response.ok) return;
+      const result=await response.json().catch(()=>({}));
+      throw new Error(result.error || "Não foi possível salvar a montagem do encontro.");
+    } catch(error) {
+      setEventAssignments(previous);
+      window.alert(error instanceof Error ? error.message : "Não foi possível salvar a montagem do encontro.");
+    }
+  }
+  function assignPerson(teamIndex: number, personId: number) {
+    const previous=eventAssignments.map((items)=>[...items]);
+    if(previous.some((items)=>items.includes(personId))) return;
+    const next=Array.from({length:teamList.length},(_,index)=>[...(previous[index] || [])]);
+    next[teamIndex]=[...(next[teamIndex] || []),personId];
+    void saveAssignments(next,previous);
+  }
+  function removeAssignment(teamIndex: number, personId: number) {
+    const previous=eventAssignments.map((items)=>[...items]);
+    const next=Array.from({length:teamList.length},(_,index)=>index === teamIndex ? (previous[index] || []).filter((id)=>id !== personId) : [...(previous[index] || [])]);
+    void saveAssignments(next,previous);
+  }
   async function deletePerson(person: Person) {
     if (person.active !== false) return;
     if (!window.confirm(`Excluir definitivamente o perfil de ${person.name}? Esta ação não pode ser desfeita.`)) return;
     const previous = people;
+    const previousAssignments=eventAssignments;
     setPeople((items) => items.filter((item) => item.id !== person.id));
+    setEventAssignments((items)=>items.map((ids)=>ids.filter((id)=>id !== person.id)));
     setSelected(null);
     try {
       const response = await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"deletePerson",id:person.id})});
@@ -233,6 +269,7 @@ export default function Home() {
       throw new Error(result.error || "Não foi possível excluir o perfil.");
     } catch (error) {
       setPeople(previous);
+      setEventAssignments(previousAssignments);
       setSelected(person);
       window.alert(error instanceof Error ? error.message : "Não foi possível excluir o perfil.");
     }
@@ -312,6 +349,7 @@ export default function Home() {
               ["jovens", CircleUserRound, "Jovens"],
               ["tios", UsersRound, "Casais de tios"],
               ["equipes", BookOpen, "Equipes"],
+              ["encontro", CalendarPlus, "Novo encontro"],
               ["tags", Tags, "Tags e talentos"],
             ].map(([id, Icon, label]) => (
               <button
@@ -371,12 +409,23 @@ export default function Home() {
               edit={(team, index) => setEditingTeam({ team, index })}
             />
           )}{" "}
+          {!isLoading && view === "encontro" && (
+            <EncounterPage
+              people={people}
+              teams={teamList}
+              assignments={eventAssignments}
+              eventNumber={lastEjc + 1}
+              assign={assignPerson}
+              remove={removeAssignment}
+            />
+          )}{" "}
           {!isLoading && view === "tags" && (
             <TagsPage
               tags={tags}
               lastEjc={lastEjc}
               setLastEjc={(value: number) => {
                 if (!Number.isInteger(value) || value < 1) return;
+                if(value !== lastEjc)setEventAssignments(teamList.map(()=>[]));
                 setLastEjc(value);
                 fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"lastEjc",lastEjc:value})});
               }}
@@ -659,6 +708,130 @@ function Avatar({ name, c, photo }: { name: string; c: string; photo?: string })
     </span>
   );
 }
+
+function EncounterPage({
+  people,
+  teams,
+  assignments,
+  eventNumber,
+  assign,
+  remove,
+}: {
+  people: Person[];
+  teams: string[][];
+  assignments: number[][];
+  eventNumber: number;
+  assign: (teamIndex: number, personId: number) => void;
+  remove: (teamIndex: number, personId: number) => void;
+}) {
+  const [pickingTeam, setPickingTeam] = useState<number | null>(null);
+  const assignedIds=assignments.flat();
+  const activePeople=people.filter((person)=>person.active !== false);
+  const assignedPeople=activePeople.filter((person)=>assignedIds.includes(person.id));
+  return (
+    <>
+      <p className="eyebrow">Montagem do encontro</p>
+      <h1 className="page-title">Equipes do {eventNumber}º EJC</h1>
+      <p className="mt-2 max-w-3xl text-[#687572]">Distribua jovens e casais de tios entre as equipes. Cada perfil pode participar de apenas uma equipe neste encontro.</p>
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        <Stat n={assignedPeople.length} text="pessoas escaladas" c={colors[0]} />
+        <Stat n={activePeople.filter((person)=>!assignedIds.includes(person.id)).length} text="perfis disponíveis" c={colors[1]} />
+        <Stat n={teams.filter((_,index)=>(assignments[index] || []).length > 0).length} text="equipes preenchidas" c={colors[2]} />
+      </div>
+      <div className="mt-7 grid items-start gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+        {teams.map((team,teamIndex)=>{
+          const members=(assignments[teamIndex] || []).map((id)=>people.find((person)=>person.id === id)).filter((person): person is Person=>!!person && person.active !== false);
+          return (
+            <section key={`${team[0]}-${teamIndex}`} className="min-w-0 overflow-hidden rounded-2xl border border-[#dedacf] bg-white shadow-sm">
+              <div className="border-b border-[#eee6dd] bg-[#fffaf6] p-4 sm:p-5">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wider text-[#c9580d]">Equipe {String(teamIndex+1).padStart(2,"0")}</p><h2 className="mt-1 break-words font-serif text-xl font-bold">{team[0]}</h2></div>
+                  <span className="shrink-0 rounded-full bg-[#17120f] px-2.5 py-1 text-xs font-bold text-white">{members.length}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5">{team.slice(1).map((tag)=><span key={tag} className="max-w-full break-all rounded-full bg-[#f0eee8] px-2.5 py-1 text-xs">{displayTag(tag)}</span>)}</div>
+              </div>
+              <div className="grid gap-2 p-4 sm:p-5">
+                {members.length ? members.map((person)=>(
+                  <div key={person.id} className="flex min-w-0 items-center gap-3 rounded-xl border border-[#e4dfd6] p-3">
+                    <Avatar name={person.name} photo={person.photo} c={colors[person.id % colors.length]} />
+                    <div className="min-w-0 flex-1"><b className="block truncate text-sm">{person.name}</b><small className="block truncate text-[#7d8784]">{person.kind === "jovem" ? "Jovem" : "Casal de tios"} · {displayTag(person.main)}</small></div>
+                    <Button type="button" variant="ghost" size="icon-sm" onClick={()=>remove(teamIndex,person.id)} aria-label={`Retirar ${person.name} de ${team[0]}`} className="shrink-0 text-[#a52a20] hover:bg-[#fff1ef] hover:text-[#a52a20]"><Trash2 size={16}/></Button>
+                  </div>
+                )) : <div className="rounded-xl border border-dashed border-[#ddd2c8] p-5 text-center text-sm text-[#8b817a]">Nenhuma pessoa adicionada.</div>}
+                <Button type="button" variant="outline" onClick={()=>setPickingTeam(teamIndex)} className="mt-1 w-full border-[#e2a77d] text-[#a84608] hover:bg-[#fff3e9]"><UserPlus/> Adicionar pessoa</Button>
+              </div>
+            </section>
+          );
+        })}
+      </div>
+      <PersonPicker
+        teamIndex={pickingTeam}
+        teams={teams}
+        people={people}
+        assignments={assignments}
+        close={()=>setPickingTeam(null)}
+        choose={(personId)=>{ if(pickingTeam === null)return; assign(pickingTeam,personId); setPickingTeam(null); }}
+      />
+    </>
+  );
+}
+
+function PersonPicker({
+  teamIndex,
+  teams,
+  people,
+  assignments,
+  close,
+  choose,
+}: {
+  teamIndex: number | null;
+  teams: string[][];
+  people: Person[];
+  assignments: number[][];
+  close: () => void;
+  choose: (personId: number) => void;
+}) {
+  const [query,setQuery]=useState("");
+  const [kind,setKind]=useState<"todos" | Kind>("todos");
+  useEffect(()=>{ if(teamIndex !== null){setQuery("");setKind("todos");} },[teamIndex]);
+  if(teamIndex === null)return null;
+  const team=teams[teamIndex];
+  const teamTags=team.slice(1).map(normalizeTag);
+  const assignedTeamByPerson=new Map<number,number>();
+  assignments.forEach((ids,index)=>ids.forEach((id)=>assignedTeamByPerson.set(id,index)));
+  const candidates=people
+    .filter((person)=>person.active !== false)
+    .filter((person)=>kind === "todos" || person.kind === kind)
+    .filter((person)=>`${person.name} ${person.community} ${person.main} ${person.tags.join(" ")}`.toLocaleLowerCase("pt-BR").includes(query.toLocaleLowerCase("pt-BR")))
+    .map((person)=>({person,score:person.tags.filter((tag)=>teamTags.includes(normalizeTag(tag))).length,assignedTeam:assignedTeamByPerson.get(person.id)}))
+    .sort((a,b)=>Number(a.assignedTeam !== undefined)-Number(b.assignedTeam !== undefined) || Number(b.person.servedLastEjc)-Number(a.person.servedLastEjc) || b.score-a.score || a.person.name.localeCompare(b.person.name,"pt-BR"));
+  return (
+    <Dialog open onOpenChange={close}>
+      <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-h-[92vh] sm:max-w-3xl">
+        <DialogHeader><DialogTitle className="pr-7 font-serif text-2xl">Adicionar em {team[0]}</DialogTitle><DialogDescription>Escolha um perfil disponível. Os mais compatíveis com esta equipe aparecem primeiro.</DialogDescription></DialogHeader>
+        <div className="sticky top-0 z-10 grid gap-3 bg-white pb-2">
+          <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#87918e]" size={18}/><input value={query} onChange={(event)=>setQuery(event.target.value)} placeholder="Buscar por nome, comunidade ou talento..." className="h-11 w-full rounded-xl border border-[#d7d3c9] pl-10 pr-3 outline-none focus:border-[#f47a20]"/></div>
+          <div className="flex gap-2 overflow-x-auto">{([['todos','Todos'],['jovem','Jovens'],['tios','Casais de tios']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setKind(value)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold ${kind === value ? "bg-[#17120f] text-white" : "bg-[#f0eee8] text-[#625850]"}`}>{label}</button>)}</div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {candidates.map(({person,score,assignedTeam})=>{
+            const unavailable=assignedTeam !== undefined;
+            return <button key={person.id} type="button" disabled={unavailable} onClick={()=>choose(person.id)} className={`min-w-0 rounded-2xl border p-4 text-left transition ${unavailable ? "cursor-not-allowed border-[#ddd8d1] bg-[#f5f3ef] opacity-65" : "border-[#ddd5cc] bg-white hover:border-[#f47a20] hover:bg-[#fff9f4] hover:shadow-md"}`}>
+              <div className="flex min-w-0 items-start gap-3"><Avatar name={person.name} photo={person.photo} c={colors[person.id % colors.length]}/><div className="min-w-0 flex-1"><b className="block truncate font-serif text-lg">{person.name}</b><small className="block truncate text-[#77827f]">{person.kind === "jovem" ? "Jovem" : "Casal de tios"} · {person.community}</small></div>{score > 0 && !unavailable && <span className="shrink-0 rounded-full bg-[#fff0e4] px-2 py-1 text-[10px] font-bold text-[#c9580d]">{score} afinidade{score > 1 ? "s" : ""}</span>}</div>
+              <div className="mt-3 flex flex-wrap gap-1.5"><span className="rounded-full bg-[#17120f] px-2.5 py-1 text-[11px] font-bold text-white">★ {displayTag(person.main)}</span>{person.tags.slice(0,4).map((tag)=><span key={tag} className="rounded-full bg-[#f0eee8] px-2.5 py-1 text-[11px]">{displayTag(tag)}</span>)}</div>
+              {person.current && <p className="mt-3 line-clamp-1 text-xs text-[#687572]">Atuação: {person.current}</p>}
+              {person.history.length > 0 && <p className="mt-1 line-clamp-1 text-xs text-[#687572]">Experiência: {person.history[0]}</p>}
+              {person.servedLastEjc && !unavailable && <p className="mt-3 text-[10px] font-extrabold uppercase tracking-wide text-[#c9580d]">Serviu no último EJC</p>}
+              {unavailable && <p className="mt-3 text-xs font-bold text-[#8a3d35]">Já está em {teams[assignedTeam][0]}</p>}
+            </button>;
+          })}
+        </div>
+        {!candidates.length && <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-[#7d8784]">Nenhum perfil encontrado.</div>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; edit: (team:string[], index:number)=>void }) {
   return (
     <>
