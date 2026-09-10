@@ -1,20 +1,16 @@
+import { put } from "@vercel/blob";
 import { NextResponse } from "next/server";
+import { requestIsAdmin } from "@/lib/admin-auth";
 
-// Store the profile image in the same Neon JSONB record as the person.
-// This avoids requiring a separate Vercel Blob token for photo uploads.
 export async function POST(req: Request) {
-  const data = await req.formData();
-  const file = data.get("file");
-  if (!(file instanceof File) || !file.size) {
-    return NextResponse.json({ error: "Arquivo ausente" }, { status: 400 });
-  }
-  if (!file.type.startsWith("image/")) {
-    return NextResponse.json({ error: "Envie uma imagem válida" }, { status: 415 });
-  }
-  if (file.size > 5 * 1024 * 1024) {
-    return NextResponse.json({ error: "A imagem deve ter no máximo 5 MB" }, { status: 413 });
-  }
-  const bytes = Buffer.from(await file.arrayBuffer());
-  const url = `data:${file.type};base64,${bytes.toString("base64")}`;
-  return NextResponse.json({ url });
+  if(!requestIsAdmin(req))return NextResponse.json({error:"Entre com a senha administrativa para enviar fotos."},{status:401});
+  if(!process.env.BLOB_READ_WRITE_TOKEN) return NextResponse.json({error:"Vercel Blob não configurado. Adicione BLOB_READ_WRITE_TOKEN ao projeto."},{status:503});
+  const data=await req.formData();
+  const file=data.get("file");
+  if(!(file instanceof File)||!file.size)return NextResponse.json({error:"Arquivo ausente"},{status:400});
+  if(!file.type.startsWith("image/"))return NextResponse.json({error:"Envie uma imagem válida"},{status:415});
+  if(file.size>4*1024*1024)return NextResponse.json({error:"A imagem deve ter no máximo 4 MB"},{status:413});
+  const extension=(file.name.split(".").pop()||file.type.split("/")[1]||"jpg").replace(/[^a-zA-Z0-9]/g,"");
+  const blob=await put(`perfis/${Date.now()}.${extension}`,file,{access:"public",addRandomSuffix:true,contentType:file.type});
+  return NextResponse.json({url:blob.url});
 }

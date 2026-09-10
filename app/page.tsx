@@ -9,6 +9,8 @@ import {
   ChevronRight,
   CircleUserRound,
   LayoutGrid,
+  LockKeyhole,
+  LogOut,
   Pencil,
   Plus,
   Search,
@@ -96,6 +98,10 @@ export default function Home() {
   const [lastEjc, setLastEjc] = useState(18);
   const [isLoading, setIsLoading] = useState(true);
   const [formError, setFormError] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminConfigured, setAdminConfigured] = useState(true);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginError, setLoginError] = useState("");
   useEffect(() => {
     fetch("/api/data").then(r=>r.ok?r.json():Promise.reject()).then(data=>{
       if(Array.isArray(data.people))setPeople(data.people.map((person: Person & { history?: string | string[] })=>({
@@ -117,7 +123,22 @@ export default function Home() {
       if(data.tags?.length)setCustomTags(data.tags.map(normalizeTag));
       if(Number.isInteger(data.lastEjc))setLastEjc(data.lastEjc);
     }).catch(()=>{}).finally(()=>setIsLoading(false));
+    fetch("/api/auth").then((response)=>response.json()).then((data)=>{
+      setIsAdmin(data.authenticated === true);
+      setAdminConfigured(data.configured !== false);
+    }).catch(()=>{});
   }, []);
+  async function login(password: string) {
+    setLoginError("");
+    const response=await fetch("/api/auth",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password})});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok){setLoginError(result.error || "Não foi possível entrar.");return;}
+    setIsAdmin(true);setLoginOpen(false);setLoginError("");
+  }
+  async function logout() {
+    await fetch("/api/auth",{method:"DELETE"});
+    setIsAdmin(false);setAdding(false);setEditing(null);setEditingTeam(null);setDeactivating(null);
+  }
   const tags = useMemo(
     () =>
       Array.from(
@@ -162,8 +183,8 @@ export default function Home() {
     const file = fd.get("photo") as File;
     let photo = original?.photo;
     if (file?.size) {
-      if (file.size > 5 * 1024 * 1024) {
-        setFormError("A foto deve ter no máximo 5 MB. Reduza o tamanho da imagem e tente novamente.");
+      if (file.size > 4 * 1024 * 1024) {
+        setFormError("A foto deve ter no máximo 4 MB. Reduza o tamanho da imagem e tente novamente.");
         return;
       }
       const upload=new FormData(); upload.set("file",file); const res=await fetch("/api/upload",{method:"POST",body:upload});
@@ -333,12 +354,12 @@ export default function Home() {
               </small>
             </span>
           </button>
-          <Button
-            onClick={() => { setFormError(""); setAdding(true); }}
-            className="h-10 shrink-0 rounded-full bg-[#f47a20] px-3 text-black hover:bg-[#df6813] sm:px-5"
-          >
-            <Plus /> <span className="hidden sm:inline">Novo perfil</span><span className="sm:hidden">Novo</span>
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            {isAdmin ? <>
+              <Button onClick={() => { setFormError(""); setAdding(true); }} className="h-10 rounded-full bg-[#f47a20] px-3 text-black hover:bg-[#df6813] sm:px-5"><Plus /> <span className="hidden sm:inline">Novo perfil</span><span className="sm:hidden">Novo</span></Button>
+              <Button onClick={()=>void logout()} variant="outline" size="icon" className="size-10 rounded-full" aria-label="Sair do modo administrador"><LogOut size={17}/></Button>
+            </> : <Button onClick={()=>{setLoginError("");setLoginOpen(true);}} variant="outline" className="h-10 rounded-full px-3 sm:px-4"><LockKeyhole size={17}/><span className="hidden sm:inline">Administrar</span></Button>}
+          </div>
         </div>
       </header>
       <div className="mx-auto grid max-w-[1440px] lg:grid-cols-[230px_1fr]">
@@ -400,6 +421,7 @@ export default function Home() {
               setQuery={setQuery}
               open={setSelected}
               add={() => { setFormError(""); setAdding(true); }}
+              isAdmin={isAdmin}
             />
           )}{" "}
           {!isLoading && view === "equipes" && (
@@ -407,6 +429,7 @@ export default function Home() {
               people={people}
               teams={teamList}
               edit={(team, index) => setEditingTeam({ team, index })}
+              isAdmin={isAdmin}
             />
           )}{" "}
           {!isLoading && view === "encontro" && (
@@ -417,6 +440,7 @@ export default function Home() {
               eventNumber={lastEjc + 1}
               assign={assignPerson}
               remove={removeAssignment}
+              isAdmin={isAdmin}
             />
           )}{" "}
           {!isLoading && view === "tags" && (
@@ -441,6 +465,7 @@ export default function Home() {
                 setNewTag("");
               }}
               remove={deleteTag}
+              isAdmin={isAdmin}
             />
           )}
         </main>
@@ -457,6 +482,7 @@ export default function Home() {
         }}
         toggleActive={() => selected && toggleActive(selected)}
         deletePerson={() => selected && void deletePerson(selected)}
+        isAdmin={isAdmin}
       />
       <PhotoPreview data={photoPreview} close={() => setPhotoPreview(null)} />
       <Add
@@ -487,6 +513,7 @@ export default function Home() {
         close={() => setEditingTeam(null)}
         save={saveTeam}
       />
+      <AdminLogin open={loginOpen} close={()=>{setLoginOpen(false);setLoginError("");}} login={login} error={loginError} configured={adminConfigured}/>
     </div>
   );
 }
@@ -612,6 +639,7 @@ function Directory({
   setQuery,
   open,
   add,
+  isAdmin,
 }: any) {
   return (
     <>
@@ -621,9 +649,9 @@ function Directory({
           <h1 className="page-title">{title}</h1>
           <p className="mt-2 text-[#687572]">{subtitle}</p>
         </div>
-        <Button onClick={add} className="w-full rounded-full bg-[#f47a20] text-black hover:bg-[#df6813] sm:w-fit">
+        {isAdmin && <Button onClick={add} className="w-full rounded-full bg-[#f47a20] text-black hover:bg-[#df6813] sm:w-fit">
           <Plus /> Adicionar perfil
-        </Button>
+        </Button>}
       </div>
       <div className="relative mt-7">
         <Search
@@ -716,6 +744,7 @@ function EncounterPage({
   eventNumber,
   assign,
   remove,
+  isAdmin,
 }: {
   people: Person[];
   teams: string[][];
@@ -723,6 +752,7 @@ function EncounterPage({
   eventNumber: number;
   assign: (teamIndex: number, personId: number) => void;
   remove: (teamIndex: number, personId: number) => void;
+  isAdmin: boolean;
 }) {
   const [pickingTeam, setPickingTeam] = useState<number | null>(null);
   const assignedIds=assignments.flat();
@@ -755,10 +785,10 @@ function EncounterPage({
                   <div key={person.id} className="flex min-w-0 items-center gap-3 rounded-xl border border-[#e4dfd6] p-3">
                     <Avatar name={person.name} photo={person.photo} c={colors[person.id % colors.length]} />
                     <div className="min-w-0 flex-1"><b className="block truncate text-sm">{person.name}</b><small className="block truncate text-[#7d8784]">{person.kind === "jovem" ? "Jovem" : "Casal de tios"} · {displayTag(person.main)}</small></div>
-                    <Button type="button" variant="ghost" size="icon-sm" onClick={()=>remove(teamIndex,person.id)} aria-label={`Retirar ${person.name} de ${team[0]}`} className="shrink-0 text-[#a52a20] hover:bg-[#fff1ef] hover:text-[#a52a20]"><Trash2 size={16}/></Button>
+                    {isAdmin && <Button type="button" variant="ghost" size="icon-sm" onClick={()=>remove(teamIndex,person.id)} aria-label={`Retirar ${person.name} de ${team[0]}`} className="shrink-0 text-[#a52a20] hover:bg-[#fff1ef] hover:text-[#a52a20]"><Trash2 size={16}/></Button>}
                   </div>
                 )) : <div className="rounded-xl border border-dashed border-[#ddd2c8] p-5 text-center text-sm text-[#8b817a]">Nenhuma pessoa adicionada.</div>}
-                <Button type="button" variant="outline" onClick={()=>setPickingTeam(teamIndex)} className="mt-1 w-full border-[#e2a77d] text-[#a84608] hover:bg-[#fff3e9]"><UserPlus/> Adicionar pessoa</Button>
+                {isAdmin && <Button type="button" variant="outline" onClick={()=>setPickingTeam(teamIndex)} className="mt-1 w-full border-[#e2a77d] text-[#a84608] hover:bg-[#fff3e9]"><UserPlus/> Adicionar pessoa</Button>}
               </div>
             </section>
           );
@@ -832,7 +862,7 @@ function PersonPicker({
   );
 }
 
-function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; edit: (team:string[], index:number)=>void }) {
+function Teams({ people, teams, edit, isAdmin }: { people: Person[]; teams: string[][]; edit: (team:string[], index:number)=>void; isAdmin:boolean }) {
   return (
     <>
       <p className="eyebrow">Mapa de equipes</p>
@@ -867,7 +897,7 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
                 >
                   {String(i + 1).padStart(2, "0")}
                 </span>
-                <div className="flex items-center gap-2"><span className="text-xs text-[#84908c]">{matches.length} compatíveis</span><Button variant="ghost" size="icon-sm" onClick={()=>edit(t,i)} aria-label={`Editar ${t[0]}`}><Pencil size={15}/></Button></div>
+                <div className="flex items-center gap-2"><span className="text-xs text-[#84908c]">{matches.length} compatíveis</span>{isAdmin && <Button variant="ghost" size="icon-sm" onClick={()=>edit(t,i)} aria-label={`Editar ${t[0]}`}><Pencil size={15}/></Button>}</div>
               </div>
               <h2 className="mt-4 break-words font-serif text-xl font-bold">{t[0]}</h2>
               <div className="mt-3 flex flex-wrap gap-1.5">
@@ -904,7 +934,7 @@ function Teams({ people, teams, edit }: { people: Person[]; teams: string[][]; e
     </>
   );
 }
-function TagsPage({ tags, value, setValue, add, remove, lastEjc, setLastEjc }: any) {
+function TagsPage({ tags, value, setValue, add, remove, lastEjc, setLastEjc, isAdmin }: any) {
   return (
     <>
       <p className="eyebrow">Configuração</p>
@@ -912,15 +942,15 @@ function TagsPage({ tags, value, setValue, add, remove, lastEjc, setLastEjc }: a
       <p className="mt-2 text-[#687572]">
         Crie e organize as características usadas nos perfis e nas equipes.
       </p>
-      <div className="mt-6 max-w-sm rounded-2xl border bg-white p-5">
+      {isAdmin && <div className="mt-6 max-w-sm rounded-2xl border bg-white p-5">
         <label className="field">
           Último EJC realizado
           <input type="number" min={1} value={lastEjc} onChange={(event) => setLastEjc(Number(event.target.value))} />
           <small>Experiências de encontros posteriores serão bloqueadas.</small>
         </label>
-      </div>
+      </div>}
       <div className="mt-7 min-w-0 rounded-2xl border bg-white p-4 sm:p-6">
-        <div className="flex flex-col gap-2 sm:flex-row">
+        {isAdmin && <div className="flex flex-col gap-2 sm:flex-row">
           <input
             value={value}
             onChange={(e) => setValue(e.target.value)}
@@ -931,7 +961,7 @@ function TagsPage({ tags, value, setValue, add, remove, lastEjc, setLastEjc }: a
           <Button onClick={add} className="h-11 w-full bg-[#f47a20] text-black hover:bg-[#df6813] sm:w-auto">
             <Plus /> Criar tag
           </Button>
-        </div>
+        </div>}
         <div className="mt-6 flex flex-wrap gap-2">
           {tags.map((t: string, i: number) => (
             <span
@@ -943,7 +973,7 @@ function TagsPage({ tags, value, setValue, add, remove, lastEjc, setLastEjc }: a
               className="inline-flex max-w-full min-w-0 items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold sm:px-4"
             >
               <span className="min-w-0 break-all">{displayTag(t)}</span>
-              <button type="button" onClick={() => remove(t)} aria-label={`Excluir tag ${displayTag(t)}`} className="grid size-6 shrink-0 place-items-center rounded-full hover:bg-black/10">×</button>
+              {isAdmin && <button type="button" onClick={() => remove(t)} aria-label={`Excluir tag ${displayTag(t)}`} className="grid size-6 shrink-0 place-items-center rounded-full hover:bg-black/10">×</button>}
             </span>
           ))}
         </div>
@@ -959,6 +989,7 @@ function Profile({
   edit,
   toggleActive,
   deletePerson,
+  isAdmin,
 }: {
   person: Person | null;
   teams: string[][];
@@ -967,6 +998,7 @@ function Profile({
   edit: () => void;
   toggleActive: () => void;
   deletePerson: () => void;
+  isAdmin: boolean;
 }) {
   if (!person) return null;
   const inactive = person.active === false;
@@ -1002,13 +1034,13 @@ function Profile({
             {inactive && <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-[#b42318] px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-white"><AlertTriangle size={13}/> Perfil inativo</span>}
             {!inactive && person.servedLastEjc && <span className="mt-2 inline-flex rounded-full bg-[#fff0e4] px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-[#c9580d]">Serviu no último EJC</span>}
           </div>
-          <div className="flex w-full flex-col gap-2 sm:w-auto">
+          {isAdmin && <div className="flex w-full flex-col gap-2 sm:w-auto">
             {!inactive && <Button className="w-full" variant="outline" size="sm" onClick={edit}><Pencil/> Editar</Button>}
             <Button className={`w-full ${inactive ? "border-[#17803d] bg-[#eefbf2] text-[#116530] hover:bg-[#dff5e6]" : "border-[#e3a49e] text-[#a52a20] hover:bg-[#fff1ef]"}`} variant="outline" size="sm" onClick={toggleActive}>
               {person.active === false ? "Ativar perfil" : "Desativar perfil"}
             </Button>
             {inactive && <Button className="w-full border-[#b42318] bg-[#b42318] text-white hover:bg-[#8e1c13] hover:text-white" variant="outline" size="sm" onClick={deletePerson}><Trash2/> Excluir perfil</Button>}
-          </div>
+          </div>}
         </div>
         {inactive ? (
           <div className="rounded-2xl border-2 border-[#b42318] bg-[#fff4f2] p-5 sm:p-6">
@@ -1092,6 +1124,37 @@ function PhotoPreview({
         <div className="grid min-h-48 place-items-center overflow-hidden rounded-xl bg-[#17120f]">
           <img src={data.src} alt={`Foto ampliada de ${data.name}`} className="max-h-[82dvh] max-w-full object-contain" />
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AdminLogin({
+  open,
+  close,
+  login,
+  error,
+  configured,
+}: {
+  open: boolean;
+  close: () => void;
+  login: (password: string) => Promise<void>;
+  error: string;
+  configured: boolean;
+}) {
+  const [submitting,setSubmitting]=useState(false);
+  return (
+    <Dialog open={open} onOpenChange={close}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 pr-7 font-serif text-2xl"><LockKeyhole className="text-[#c9580d]"/> Área administrativa</DialogTitle>
+          <DialogDescription>Entre para cadastrar e editar perfis, tags, equipes e a montagem do encontro.</DialogDescription>
+        </DialogHeader>
+        {configured ? <form onSubmit={async(event)=>{event.preventDefault();setSubmitting(true);await login(String(new FormData(event.currentTarget).get("password")||""));setSubmitting(false);}} className="grid gap-4">
+          <label className="field">Senha administrativa<input name="password" type="password" required autoFocus autoComplete="current-password" placeholder="Digite a senha"/></label>
+          {error && <div role="alert" className="rounded-xl border border-[#efaaa3] bg-[#fff1ef] p-3 text-sm font-semibold text-[#84251d]">{error}</div>}
+          <DialogFooter className="[&_button]:w-full sm:[&_button]:w-auto"><Button type="button" variant="outline" onClick={close}>Cancelar</Button><Button type="submit" disabled={submitting} className="bg-[#f47a20] text-black hover:bg-[#df6813]">{submitting?"Entrando...":"Entrar"}</Button></DialogFooter>
+        </form> : <div className="rounded-xl border border-[#efc17d] bg-[#fff8e8] p-4 text-sm leading-6 text-[#714509]">A senha ainda não foi configurada. Adicione <b>ADMIN_PASSWORD</b> e <b>ADMIN_SESSION_SECRET</b> nas variáveis de ambiente da Vercel e faça um novo deploy.</div>}
       </DialogContent>
     </Dialog>
   );
@@ -1190,7 +1253,7 @@ function Add({
           </DialogDescription>
         </DialogHeader>
         <form key={person?.id ?? "new"} onSubmit={(event) => { event.preventDefault(); void save(new FormData(event.currentTarget), person ?? undefined); }} className="grid gap-4 sm:grid-cols-2">
-          <label className="field sm:col-span-2">Foto do perfil<div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#e5b895] bg-[#fff8f2] p-3 sm:flex-row sm:items-center sm:gap-4 sm:p-4">{person?.photo?<span className="size-16 shrink-0 overflow-hidden rounded-full"><img src={person.photo} alt="Foto atual" className="size-full object-cover"/></span>:<span className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f47a20]/15 text-[#c9580d]"><Camera/></span>}<input type="file" name="photo" accept="image/*" className="min-w-0 w-full text-sm"/></div><small>Envie uma imagem de no máximo 5 MB. A foto será salva com o cadastro.</small></label>
+          <label className="field sm:col-span-2">Foto do perfil<div className="flex flex-col gap-3 rounded-xl border border-dashed border-[#e5b895] bg-[#fff8f2] p-3 sm:flex-row sm:items-center sm:gap-4 sm:p-4">{person?.photo?<span className="size-16 shrink-0 overflow-hidden rounded-full"><img src={person.photo} alt="Foto atual" className="size-full object-cover"/></span>:<span className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-full bg-[#f47a20]/15 text-[#c9580d]"><Camera/></span>}<input type="file" name="photo" accept="image/*" className="min-w-0 w-full text-sm"/></div><small>Envie uma imagem de no máximo 4 MB. A foto será salva no armazenamento de imagens.</small></label>
           <Field label="Nome completo / nome do casal" name="name" defaultValue={person?.name} required />
           <label className="field">
             Tipo
